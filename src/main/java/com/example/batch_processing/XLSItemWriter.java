@@ -1,179 +1,185 @@
 package com.example.batch.writer;
 
-import com.example.entities.*;
+import com.example.entities.SFCMExtractionSheetEntity;
+import com.example.entities.SFCMExtractionSheetFieldEntity;
+import com.example.entities.SFCMExtractionSheetHeaderEntity;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.file.transform.LineAggregator;
+import org.springframework.batch.item.support.AbstractItemStreamItemWriter;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class ExcelEntityWriter implements ItemWriter<SFCMExtractionEntity> {
+public class ExcelSheetWriter extends AbstractItemStreamItemWriter<Map<String, Object>> {
 
     private final String filePath;
-    private final Map<BigInteger, CellStyle> cellStyleCache;
+    private final SFCMExtractionSheetEntity sheetEntity;
+    private Workbook workbook;
 
-    public ExcelEntityWriter(String filePath) {
+    public ExcelSheetWriter(String filePath, SFCMExtractionSheetEntity sheetEntity) {
         this.filePath = filePath;
-        this.cellStyleCache = new HashMap<>();
+        this.sheetEntity = sheetEntity;
     }
 
     @Override
-    public void write(List<? extends SFCMExtractionEntity> items) throws IOException {
-        Workbook workbook = new XSSFWorkbook();
-
-        for (SFCMExtractionEntity extraction : items) {
-            for (SFCMExtractionSheetEntity sheetEntity : extraction.getExtractionSheetEntitys()) {
-                Sheet sheet = workbook.createSheet(sheetEntity.getSheetName());
-
-                // Ajouter les en-têtes
-                Row headerRow = sheet.createRow(0);
-                Set<SFCMExtractionSheetHeaderEntity> headers = sheetEntity.getExtractionSheetHeaderEntitys();
-                int colIndex = 0;
-                for (SFCMExtractionSheetHeaderEntity header : headers) {
-                    Cell cell = headerRow.createCell(colIndex++);
-                    cell.setCellValue(header.getHeaderName());
-                    // Appliquer un style d'en-tête si nécessaire
-                    cell.setCellStyle(createHeaderCellStyle(workbook));
-                }
-
-                // Ajouter les données
-                int rowIndex = 1;
-                Set<SFCMExtractionSheetFieldEntity> fields = sheetEntity.getExtractionSheetFieldEntity();
-                for (SFCMExtractionSheetFieldEntity field : fields) {
-                    Row dataRow = sheet.createRow(rowIndex++);
-                    colIndex = 0;
-                    for (SFCMExtractionSheetHeaderEntity header : headers) {
-                        Cell cell = dataRow.createCell(colIndex++);
-                        cell.setCellValue(getFieldValue(field, header));
-                        // Appliquer le style défini dans l'entité
-                        CellStyle cellStyle = getCellStyle(workbook, field.getExtractionCellStyleEntity());
-                        cell.setCellStyle(cellStyle);
-                    }
-                }
-            }
+    public void open(ExecutionContext executionContext) {
+        try {
+            // Charger le workbook existant ou en créer un nouveau
+            workbook = WorkbookFactory.create(new File(filePath));
+        } catch (IOException e) {
+            workbook = new XSSFWorkbook();
         }
-
-        // Écrire dans le fichier
-        try (FileOutputStream outputStream = new FileOutputStream(filePath)) {
-            workbook.write(outputStream);
-        }
-        workbook.close();
     }
 
-    private String getFieldValue(SFCMExtractionSheetFieldEntity field, SFCMExtractionSheetHeaderEntity header) {
-        // Implémentez la logique pour obtenir la valeur du champ en fonction de l'en-tête
-        // Par exemple, si le nom de l'en-tête correspond à un attribut du champ
-        // Retournez la valeur appropriée
-        return "ValeurExemple"; // Remplacez par la logique réelle
+    @Override
+    public void write(List<? extends Map<String, Object>> items) throws IOException {
+        // Vérifier si la feuille existe, sinon la créer
+        Sheet sheet = workbook.getSheet(sheetEntity.getSheetName());
+        if (sheet == null) {
+            sheet = workbook.createSheet(sheetEntity.getSheetName());
+            createHeaderRow(sheet); // Ajouter les headers à la feuille
+        }
+
+        // Ajouter les lignes de données
+        int rowIndex = sheet.getLastRowNum() + 1;
+        for (Map<String, Object> rowData : items) {
+            Row row = sheet.createRow(rowIndex++);
+            writeRow(row, rowData);
+        }
     }
 
-    private CellStyle getCellStyle(Workbook workbook, SFCMExtractionCellStyleEntity styleEntity) {
-        if (styleEntity == null) {
-            return workbook.createCellStyle();
+    private void createHeaderRow(Sheet sheet) {
+        Row headerRow = sheet.createRow(0);
+        Set<SFCMExtractionSheetHeaderEntity> headers = sheetEntity.getExtractionSheetHeaderEntitys();
+        int colIndex = 0;
+        for (SFCMExtractionSheetHeaderEntity header : headers) {
+            Cell cell = headerRow.createCell(colIndex++);
+            cell.setCellValue(header.getHeaderName());
+            cell.setCellStyle(createHeaderCellStyle());
         }
+    }
 
-        // Vérifier si le style a déjà été créé et mis en cache
-        if (cellStyleCache.containsKey(styleEntity.getExtractionCellStyleId())) {
-            return cellStyleCache.get(styleEntity.getExtractionCellStyleId());
+    private void writeRow(Row row, Map<String, Object> rowData) {
+        int colIndex = 0;
+        for (Object value : rowData.values()) {
+            Cell cell = row.createCell(colIndex++);
+            cell.setCellValue(value != null ? value.toString() : "");
+            cell.setCellStyle(createDataCellStyle());
         }
+    }
 
-        CellStyle cellStyle = workbook.createCellStyle();
-
-        // Appliquer les propriétés du style
-        if (styleEntity.getBackgroundColor() != null) {
-            cellStyle.setFillForegroundColor(IndexedColors.valueOf(styleEntity.getBackgroundColor()).getIndex());
-            cellStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-        }
-
-        if (styleEntity.getHorizontalAlignment() != null) {
-            cellStyle.setAlignment(HorizontalAlignment.valueOf(styleEntity.getHorizontalAlignment()));
-        }
-
-        if (styleEntity.getVerticalAlignment() != null) {
-            cellStyle.setVerticalAlignment(VerticalAlignment.valueOf(styleEntity.getVerticalAlignment()));
-        }
-
-        if (styleEntity.getBorderStyle() != null) {
-            BorderStyle borderStyle = BorderStyle.valueOf(styleEntity.getBorderStyle());
-            cellStyle.setBorderTop(borderStyle);
-            cellStyle.setBorderBottom(borderStyle);
-            cellStyle.setBorderLeft(borderStyle);
-            cellStyle.setBorderRight(borderStyle);
-        }
-
+    private CellStyle createHeaderCellStyle() {
+        CellStyle style = workbook.createCellStyle();
         Font font = workbook.createFont();
-        if (styleEntity.getFontName() != null) {
-            font.setFontName(styleEntity.getFontName());
+        font.setBold(true);
+        font.setFontHeightInPoints((short) 12);
+        style.setFont(font);
+        style.setAlignment(HorizontalAlignment.CENTER);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        return style;
+    }
+
+    private CellStyle createDataCellStyle() {
+        CellStyle style = workbook.createCellStyle();
+        style.setAlignment(HorizontalAlignment.LEFT);
+        style.setVerticalAlignment(VerticalAlignment.CENTER);
+        return style;
+    }
+
+    @Override
+    public void close() {
+        try (FileOutputStream fos = new FileOutputStream(filePath)) {
+            workbook.write(fos);
+            workbook.close();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to close Excel file", e);
         }
+    }
+}
+==================
 
-        if (styleEntity.getFontColor() != null) {
-            font.setColor(IndexedColors.valueOf(styleEntity.getFontColor()).getIndex());
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    private final JobRepository jobRepository;
+    private final PlatformTransactionManager transactionManager;
+    private final SFCMExtractionRepository extractionRepository;
+
+    public BatchConfig(JobRepository jobRepository, PlatformTransactionManager transactionManager,
+                       SFCMExtractionRepository extractionRepository) {
+        this.jobRepository = jobRepository;
+        this.transactionManager = transactionManager;
+        this.extractionRepository = extractionRepository;
+    }
+
+    @Bean
+    public Job excelJob(List<Step> sheetSteps) {
+        JobBuilder jobBuilder = new JobBuilder("excelJob", jobRepository);
+        JobFlowBuilder flowBuilder = jobBuilder.start(sheetSteps.get(0));
+        for (int i = 1; i < sheetSteps.size(); i++) {
+            flowBuilder.next(sheetSteps.get(i));
         }
+        return flowBuilder.end().build();
+    }
 
-        if (styleEntity.getFontHeight() != null) {
-            font.setFontHeightInPoints(styleEntity.getFontHeight().shortValue());
+    @Bean
+    public List<Step> sheetSteps() {
+        List<Step> steps = new ArrayList<>();
+        List<SFCMExtractionSheetEntity> sheets = getSheetsFromExtraction();
+        for (SFCMExtractionSheetEntity sheet : sheets) {
+            steps.add(createStepForSheet(sheet));
         }
+        return steps;
+    }
 
-        if (styleEntity.getFontTypographicEmphasis() != null) {
-            switch (styleEntity.getFontTypographicEmphasis().toLowerCase()) {
-                case "bold":
-                    font.setBold(true);
-                    break;
-                case "italic":
-                    font.setItalic(true);
-                    break;
-                // Ajoutez d'autres cas si nécessaire
-            }
-        }
+    private Step createStepForSheet(SFCMExtractionSheetEntity sheetEntity) {
+        return new StepBuilder(sheetEntity.getSheetName(), jobRepository)
+                .<Map<String, Object>, Map<String, Object>>chunk(10, transactionManager)
+                .reader(jdbcReader(sheetEntity))
+                .writer(excelSheetWriter(sheetEntity))
+                .build();
+    }
 
-        cellStyle.setFont(font);
+    @Bean
+    @StepScope
+    public JdbcCursorItemReader<Map<String, Object>> jdbcReader(SFCMExtractionSheetEntity sheetEntity) {
+        JdbcCursorItemReader<Map<String, Object>> reader = new JdbcCursorItemReader<>();
+        reader.setSql(sheetEntity.getExtractionSQLEntity().getExtractionSQLQuery());
+        reader.setRowMapper(new DynamicRowMapper());
+        return reader;
+    }
 
-        // Mettre en cache le style pour une utilisation ultérieure
+    @Bean
+    @StepScope
+    public ExcelSheetWriter excelSheetWriter(SFCMExtractionSheetEntity sheetEntity) {
+        String filePath = "output/extraction.xlsx";
+        return new ExcelSheetWriter(filePath, sheetEntity);
+    }
 
-::contentReference[oaicite:0]{index=0}
+    private List<SFCMExtractionSheetEntity> getSheetsFromExtraction() {
+        SFCMExtractionEntity extraction = extractionRepository.findById(1L) // Exemple d'ID
+                .orElseThrow(() -> new RuntimeException("Extraction not found"));
+        return new ArrayList<>(extraction.getExtractionSheetEntitys());
+    }
+}
+===============
+@PostMapping("/launch-excel/{id}")
+public ResponseEntity<String> launchExcelBatch(@PathVariable Long id) {
+    try {
+        JobParameters jobParameters = new JobParametersBuilder()
+                .addLong("extractionId", id)
+                .addLong("time", System.currentTimeMillis()) // Pour éviter les collisions
+                .toJobParameters();
 
-==========================================
-        @Bean
-        @StepScope
-        public ExcelEntityWriter excelEntityWriter(
-                @Value("#{jobParameters['extractionId']}") String extractionId) {
-
-            String filePath = "output/extraction_" + extractionId + ".xlsx";
-            return new ExcelEntityWriter(filePath);
-        }
-
-        @Bean
-        @StepScope
-        public JpaPagingItemReader<SFCMExtractionEntity> entityReader(
-                @Value("#{jobParameters['extractionId']}") String extractionId) {
-
-            JpaPagingItemReader<SFCMExtractionEntity> reader = new JpaPagingItemReader<>();
-            reader.setEntityManagerFactory(entityManagerFactory);
-            reader.setQueryString("SELECT e FROM SFCMExtractionEntity e WHERE e.extractionId = :extractionId");
-            reader.setParameterValues(Map.of("extractionId", new BigInteger(extractionId)));
-            return reader;
-        }
-
-        @Bean
-        public Step excelEntityStep(JpaPagingItemReader<SFCMExtractionEntity> reader, ExcelEntityWriter writer) {
-            return new StepBuilder("excelEntityStep", jobRepository)
-                    .<SFCMExtractionEntity, SFCMExtractionEntity>chunk(10, transactionManager)
-                    .reader(reader)
-                    .writer(writer)
-                    .build();
-        }
-
-        @Bean
-        public Job excelEntityJob(Step excelEntityStep) {
-            return new JobBuilder("excelEntityJob", jobRepository)
-                    .start(excelEntityStep)
-                    .build();
-        }
-===========================
-
-
+        jobLauncher.run(excelJob(sheetSteps()), jobParameters);
+        return ResponseEntity.ok("Excel batch job launched successfully!");
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("Failed to launch Excel batch job: " + e.getMessage());
+    }
+}
