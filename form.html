@@ -1,10 +1,9 @@
 <form [formGroup]="extractionForm" (ngSubmit)="onSubmit()">
-    <!-- Main Section -->
-    <mat-card class="mr-sm-2">
+    <!-- Main Configuration -->
+    <mat-card class="mr-sm-2 mb-2">
         <mat-card-header>
             <mat-card-title>Extraction Configuration</mat-card-title>
         </mat-card-header>
-
         <mat-card-content>
             <div class="row">
                 <mat-form-field class="mr-sm-2">
@@ -20,19 +19,19 @@
                 <mat-form-field class="mr-sm-2">
                     <mat-label>Extraction Type</mat-label>
                     <mat-select formControlName="extractionType">
-                        <mat-option *ngFor="let type of extractionTypes" [value]="type">{{type}}</mat-option>
+                        <mat-option value="CSV">CSV</mat-option>
+                        <mat-option value="XLS">XLS</mat-option>
                     </mat-select>
                 </mat-form-field>
             </div>
         </mat-card-content>
     </mat-card>
 
-    <!-- Mail Section -->
-    <mat-card class="mr-sm-2">
+    <!-- Email Settings -->
+    <mat-card class="mr-sm-2 mb-2">
         <mat-card-header>
             <mat-card-title>Email Settings</mat-card-title>
         </mat-card-header>
-
         <mat-card-content>
             <div class="row">
                 <mat-form-field class="mr-sm-2">
@@ -68,12 +67,11 @@
         </mat-card-content>
     </mat-card>
 
-    <!-- CSV Section -->
-    <mat-card class="mr-sm-2" *ngIf="showCsvSection">
+    <!-- CSV Settings -->
+    <mat-card class="mr-sm-2 mb-2" *ngIf="showCsvSection">
         <mat-card-header>
             <mat-card-title>CSV Settings</mat-card-title>
         </mat-card-header>
-
         <mat-card-content>
             <div class="row">
                 <mat-form-field class="mr-sm-2">
@@ -91,35 +89,168 @@
                     <input matInput formControlName="csvSettings.numberFormat">
                 </mat-form-field>
             </div>
+
+            <mat-form-field class="mr-sm-2" style="width: 100%">
+                <mat-label>Header</mat-label>
+                <textarea matInput formControlName="csvSettings.header" rows="3"></textarea>
+            </mat-form-field>
         </mat-card-content>
     </mat-card>
 
-    <!-- XLS Section -->
-    <mat-card class="mr-sm-2" *ngIf="showXlsSection">
+    <!-- XLS Settings -->
+    <mat-card class="mr-sm-2 mb-2" *ngIf="showXlsSection">
         <mat-card-header>
             <mat-card-title>XLS Settings</mat-card-title>
         </mat-card-header>
-
         <mat-card-content>
             <div formArrayName="sheets">
                 <div *ngFor="let sheet of xlsSheets.controls; let sheetIndex = index" [formGroupName]="sheetIndex">
                     <div class="row">
                         <mat-form-field class="mr-sm-2">
                             <mat-label>Sheet Name</mat-label>
-                            <input matInput formControlName="sheetName">
+                            <input matInput formControlName="sheetName" required>
                         </mat-form-field>
 
                         <mat-form-field class="mr-sm-2">
-                            <mat-label>Order</mat-label>
+                            <mat-label>Sheet Order</mat-label>
                             <input matInput type="number" formControlName="sheetOrder">
                         </mat-form-field>
 
-                        <button mat-icon-button (click)="xlsSheets.removeAt(sheetIndex)">
+                        <button mat-icon-button color="warn" (click)="xlsSheets.removeAt(sheetIndex)">
                             <mat-icon>delete</mat-icon>
                         </button>
                     </div>
 
-                    <!-- Headers and Fields would follow similar pattern -->
+                    <!-- Headers -->
+                    <div class="sub-section">
+                        <div class="row">
+                            <h4 class="mr-sm-2">Headers</h4>
+                            <button mat-stroked-button type="button" (click)="addXlsHeader(sheetIndex)">
+                                <mat-icon>add</mat-icon> Add Header
+                            </button>
+                        </div>
+
+                        <div formArrayName="headers">
+                            <div *ngFor="let header of sheet.get('headers').controls; let headerIndex = index"
+                                 [formGroupName]="headerIndex">
+                                <div class="row">
+                                    <mat-form-field class="mr-sm-2">
+                                        <mat-label>Header Name</mat-label>
+                                        <input matInput formControlName="headerName">
+                                    </mat-form-field>
+
+                                    <mat-form-field class="mr-sm-2">
+                                        <mat-label>Header Order</mat-label>
+                                        <input matInput type="number" formControlName="headerOrder">
+                                    </mat-form-field>
+
+                                    <button mat-icon-button color="warn" (click)="sheet.get('headers').removeAt(headerIndex)">
+                                        <mat-icon>delete</mat-icon>
+                                    </button>
+                                </div>
+
+                                <!-- Header Style -->
+                                <div class="style-section" formGroupName="style">
+                                    <h5>Header Style</h5>
+                                    <div class="row">
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Background Color</mat-label>
+                                            <input matInput type="color" formControlName="backgroundColor">
+                                        </mat-form-field>
+
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Font Color</mat-label>
+                                            <input matInput type="color" formControlName="fontColor">
+                                        </mat-form-field>
+
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Font Size</mat-label>
+                                            <input matInput type="number" formControlName="fontHeight" min="8" max="72">
+                                        </mat-form-field>
+
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Horizontal Alignment</mat-label>
+                                            <mat-select formControlName="horizontalAlignment">
+                                                <mat-option *ngFor="let align of alignmentOptions" [value]="align">
+                                                    {{align}}
+                                                </mat-option>
+                                            </mat-select>
+                                        </mat-form-field>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fields -->
+                    <div class="sub-section">
+                        <div class="row">
+                            <h4 class="mr-sm-2">Fields</h4>
+                            <button mat-stroked-button type="button" (click)="addXlsField(sheetIndex)">
+                                <mat-icon>add</mat-icon> Add Field
+                            </button>
+                        </div>
+
+                        <div formArrayName="fields">
+                            <div *ngFor="let field of sheet.get('fields').controls; let fieldIndex = index"
+                                 [formGroupName]="fieldIndex">
+                                <div class="row">
+                                    <mat-form-field class="mr-sm-2">
+                                        <mat-label>Field Name</mat-label>
+                                        <input matInput formControlName="fieldName">
+                                    </mat-form-field>
+
+                                    <mat-form-field class="mr-sm-2">
+                                        <mat-label>Field Order</mat-label>
+                                        <input matInput type="number" formControlName="fieldOrder">
+                                    </mat-form-field>
+
+                                    <mat-form-field class="mr-sm-2">
+                                        <mat-label>Field Format</mat-label>
+                                        <input matInput formControlName="fieldFormat">
+                                    </mat-form-field>
+
+                                    <button mat-icon-button color="warn" (click)="sheet.get('fields').removeAt(fieldIndex)">
+                                        <mat-icon>delete</mat-icon>
+                                    </button>
+                                </div>
+
+                                <!-- Field Style -->
+                                <div class="style-section" formGroupName="style">
+                                    <h5>Field Style</h5>
+                                    <div class="row">
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Number Format</mat-label>
+                                            <input matInput formControlName="cellFormat">
+                                        </mat-form-field>
+
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Border Style</mat-label>
+                                            <mat-select formControlName="borderStyle">
+                                                <mat-option *ngFor="let border of borderStyles" [value]="border">
+                                                    {{border}}
+                                                </mat-option>
+                                            </mat-select>
+                                        </mat-form-field>
+
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Vertical Alignment</mat-label>
+                                            <mat-select formControlName="verticalAlignment">
+                                                <mat-option *ngFor="let align of alignmentOptions" [value]="align">
+                                                    {{align}}
+                                                </mat-option>
+                                            </mat-select>
+                                        </mat-form-field>
+
+                                        <mat-form-field class="mr-sm-2">
+                                            <mat-label>Font Name</mat-label>
+                                            <input matInput formControlName="fontName">
+                                        </mat-form-field>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <button mat-stroked-button class="mr-sm-2" type="button" (click)="addXlsSheet()">
@@ -128,16 +259,15 @@
         </mat-card-content>
     </mat-card>
 
-    <!-- SQL Section -->
-    <mat-card class="mr-sm-2">
+    <!-- SQL Settings -->
+    <mat-card class="mr-sm-2 mb-2">
         <mat-card-header>
             <mat-card-title>SQL Settings</mat-card-title>
         </mat-card-header>
-
         <mat-card-content>
             <mat-form-field class="mr-sm-2" style="width: 100%">
                 <mat-label>SQL Query</mat-label>
-                <textarea matInput formControlName="sqlQuery" rows="5"></textarea>
+                <textarea matInput formControlName="sqlQuery" rows="5" required></textarea>
             </mat-form-field>
 
             <div formArrayName="sqlParameters">
@@ -145,20 +275,20 @@
                     <div class="row">
                         <mat-form-field class="mr-sm-2">
                             <mat-label>Parameter Type</mat-label>
-                            <input matInput formControlName="parameterType">
+                            <input matInput formControlName="parameterType" required>
                         </mat-form-field>
 
                         <mat-form-field class="mr-sm-2">
                             <mat-label>Parameter Name</mat-label>
-                            <input matInput formControlName="parameterName">
+                            <input matInput formControlName="parameterName" required>
                         </mat-form-field>
 
                         <mat-form-field class="mr-sm-2">
                             <mat-label>Parameter Value</mat-label>
-                            <input matInput formControlName="parameterValue">
+                            <input matInput formControlName="parameterValue" required>
                         </mat-form-field>
 
-                        <button mat-icon-button (click)="sqlParameters.removeAt(i)">
+                        <button mat-icon-button color="warn" (click)="sqlParameters.removeAt(i)">
                             <mat-icon>delete</mat-icon>
                         </button>
                     </div>
@@ -170,12 +300,13 @@
         </mat-card-content>
     </mat-card>
 
+    <!-- Form Actions -->
     <div class="row">
         <button mat-stroked-button class="mr-sm-2" color="primary" type="button" routerLink="/extraction/list">
             Cancel
         </button>
         <button mat-raised-button color="primary" type="submit" [disabled]="!extractionForm.valid">
-            Save Extraction
+            <mat-icon>save</mat-icon> Save Extraction
         </button>
     </div>
 </form>
