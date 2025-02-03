@@ -1,314 +1,181 @@
 <form [formGroup]="extractionForm" (ngSubmit)="onSubmit()">
-    <!-- Section Principale -->
-    <div class="form-section">
-        <h2>Configuration Principale</h2>
+    <!-- Main Section -->
+    <mat-card class="mr-sm-2">
+        <mat-card-header>
+            <mat-card-title>Extraction Configuration</mat-card-title>
+        </mat-card-header>
 
-        <div class="form-row">
-            <div class="form-field">
-                <label>Nom de l'extraction *</label>
-                <input type="text" formControlName="extractionName" required>
+        <mat-card-content>
+            <div class="row">
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>Extraction Name</mat-label>
+                    <input matInput formControlName="extractionName" required>
+                </mat-form-field>
+
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>Output Path</mat-label>
+                    <input matInput formControlName="extractionPath" required>
+                </mat-form-field>
+
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>Extraction Type</mat-label>
+                    <mat-select formControlName="extractionType">
+                        <mat-option *ngFor="let type of extractionTypes" [value]="type">{{type}}</mat-option>
+                    </mat-select>
+                </mat-form-field>
+            </div>
+        </mat-card-content>
+    </mat-card>
+
+    <!-- Mail Section -->
+    <mat-card class="mr-sm-2">
+        <mat-card-header>
+            <mat-card-title>Email Settings</mat-card-title>
+        </mat-card-header>
+
+        <mat-card-content>
+            <div class="row">
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>From</mat-label>
+                    <input matInput type="email" formControlName="mailFrom">
+                </mat-form-field>
+
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>To</mat-label>
+                    <input matInput type="email" formControlName="mailTo" required>
+                </mat-form-field>
+
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>CC</mat-label>
+                    <input matInput type="email" formControlName="mailCc">
+                </mat-form-field>
             </div>
 
-            <div class="form-field">
-                <label>Chemin de sauvegarde *</label>
-                <input type="text" formControlName="extractionPath" required>
+            <mat-form-field class="mr-sm-2" style="width: 100%">
+                <mat-label>Subject</mat-label>
+                <input matInput formControlName="mailSubject">
+            </mat-form-field>
+
+            <mat-form-field class="mr-sm-2" style="width: 100%">
+                <mat-label>Body</mat-label>
+                <textarea matInput formControlName="mailBody" rows="4"></textarea>
+            </mat-form-field>
+
+            <div class="row">
+                <mat-checkbox class="mr-sm-2" formControlName="attachFile">Attach File</mat-checkbox>
+                <mat-checkbox formControlName="zipFile">Zip File</mat-checkbox>
             </div>
+        </mat-card-content>
+    </mat-card>
 
-            <div class="form-field">
-                <label>Type d'extraction *</label>
-                <select formControlName="extractionType">
-                    <option *ngFor="let type of extractionTypes" [value]="type">{{type}}</option>
-                </select>
+    <!-- CSV Section -->
+    <mat-card class="mr-sm-2" *ngIf="showCsvSection">
+        <mat-card-header>
+            <mat-card-title>CSV Settings</mat-card-title>
+        </mat-card-header>
+
+        <mat-card-content>
+            <div class="row">
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>Separator</mat-label>
+                    <input matInput formControlName="csvSettings.separator" maxlength="1">
+                </mat-form-field>
+
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>Date Format</mat-label>
+                    <input matInput formControlName="csvSettings.dateFormat">
+                </mat-form-field>
+
+                <mat-form-field class="mr-sm-2">
+                    <mat-label>Number Format</mat-label>
+                    <input matInput formControlName="csvSettings.numberFormat">
+                </mat-form-field>
             </div>
-        </div>
-    </div>
+        </mat-card-content>
+    </mat-card>
 
-    <!-- Section Mail -->
-    <div class="form-section">
-        <h3>Paramètres d'Envoi par Email</h3>
+    <!-- XLS Section -->
+    <mat-card class="mr-sm-2" *ngIf="showXlsSection">
+        <mat-card-header>
+            <mat-card-title>XLS Settings</mat-card-title>
+        </mat-card-header>
 
-        <div class="form-row">
-            <div class="form-field">
-                <label>De</label>
-                <input type="email" formControlName="mailFrom">
-            </div>
+        <mat-card-content>
+            <div formArrayName="sheets">
+                <div *ngFor="let sheet of xlsSheets.controls; let sheetIndex = index" [formGroupName]="sheetIndex">
+                    <div class="row">
+                        <mat-form-field class="mr-sm-2">
+                            <mat-label>Sheet Name</mat-label>
+                            <input matInput formControlName="sheetName">
+                        </mat-form-field>
 
-            <div class="form-field">
-                <label>À *</label>
-                <input type="email" formControlName="mailTo" multiple required>
-            </div>
+                        <mat-form-field class="mr-sm-2">
+                            <mat-label>Order</mat-label>
+                            <input matInput type="number" formControlName="sheetOrder">
+                        </mat-form-field>
 
-            <div class="form-field">
-                <label>CC</label>
-                <input type="email" formControlName="mailCc">
-            </div>
-        </div>
-
-        <div class="form-row">
-            <div class="form-field full-width">
-                <label>Sujet</label>
-                <input type="text" formControlName="mailSubject">
-            </div>
-        </div>
-
-        <div class="form-row">
-            <div class="form-field full-width">
-                <label>Corps du message</label>
-                <textarea formControlName="mailBody" rows="4"></textarea>
-            </div>
-        </div>
-
-        <div class="form-row">
-            <div class="form-field">
-                <label>
-                    <input type="checkbox" formControlName="attachFile"> Joindre le fichier
-                </label>
-            </div>
-
-            <div class="form-field">
-                <label>
-                    <input type="checkbox" formControlName="zipFile"> Zipper le fichier
-                </label>
-            </div>
-        </div>
-    </div>
-
-    <!-- Section CSV -->
-    <div class="form-section" *ngIf="showCsvSection">
-        <h3>Configuration CSV</h3>
-
-        <div class="form-row">
-            <div class="form-field">
-                <label>Séparateur *</label>
-                <input type="text" formControlName="csvSettings.separator" maxlength="1">
-            </div>
-
-            <div class="form-field">
-                <label>Format de date</label>
-                <input type="text" formControlName="csvSettings.dateFormat">
-            </div>
-
-            <div class="form-field">
-                <label>Format numérique</label>
-                <input type="text" formControlName="csvSettings.numberFormat">
-            </div>
-        </div>
-
-        <div class="form-row">
-            <div class="form-field full-width">
-                <label>En-tête</label>
-                <textarea formControlName="csvSettings.header" rows="3"></textarea>
-            </div>
-        </div>
-    </div>
-
-    <!-- Section XLS -->
-    <div class="form-section" *ngIf="showXlsSection">
-        <h3>Configuration XLS</h3>
-
-        <div formArrayName="sheets">
-            <div *ngFor="let sheet of xlsSheets.controls; let sheetIndex = index" [formGroupName]="sheetIndex">
-                <div class="sheet-container">
-                    <div class="sheet-header">
-                        <h4>Feuille {{sheetIndex + 1}}</h4>
-                        <button type="button" (click)="xlsSheets.removeAt(sheetIndex)">Supprimer</button>
+                        <button mat-icon-button (click)="xlsSheets.removeAt(sheetIndex)">
+                            <mat-icon>delete</mat-icon>
+                        </button>
                     </div>
 
-                    <div class="form-row">
-                        <div class="form-field">
-                            <label>Nom de la feuille *</label>
-                            <input type="text" formControlName="sheetName">
-                        </div>
+                    <!-- Headers and Fields would follow similar pattern -->
+                </div>
+            </div>
+            <button mat-stroked-button class="mr-sm-2" type="button" (click)="addXlsSheet()">
+                <mat-icon>add</mat-icon> Add Sheet
+            </button>
+        </mat-card-content>
+    </mat-card>
 
-                        <div class="form-field">
-                            <label>Ordre *</label>
-                            <input type="number" formControlName="sheetOrder" min="0">
-                        </div>
-                    </div>
+    <!-- SQL Section -->
+    <mat-card class="mr-sm-2">
+        <mat-card-header>
+            <mat-card-title>SQL Settings</mat-card-title>
+        </mat-card-header>
 
-                    <!-- En-têtes -->
-                    <div class="sub-section">
-                        <h5>En-têtes
-                            <button type="button" (click)="addXlsHeader(sheetIndex)">+ Ajouter</button>
-                        </h5>
+        <mat-card-content>
+            <mat-form-field class="mr-sm-2" style="width: 100%">
+                <mat-label>SQL Query</mat-label>
+                <textarea matInput formControlName="sqlQuery" rows="5"></textarea>
+            </mat-form-field>
 
-                        <div formArrayName="headers">
-                            <div *ngFor="let header of sheet.get('headers').controls; let headerIndex = index"
-                                 [formGroupName]="headerIndex">
-                                <div class="header-container">
-                                    <div class="form-row">
-                                        <div class="form-field">
-                                            <label>Nom de l'en-tête *</label>
-                                            <input type="text" formControlName="headerName">
-                                        </div>
+            <div formArrayName="sqlParameters">
+                <div *ngFor="let param of sqlParameters.controls; let i = index" [formGroupName]="i">
+                    <div class="row">
+                        <mat-form-field class="mr-sm-2">
+                            <mat-label>Parameter Type</mat-label>
+                            <input matInput formControlName="parameterType">
+                        </mat-form-field>
 
-                                        <div class="form-field">
-                                            <label>Ordre *</label>
-                                            <input type="number" formControlName="headerOrder" min="0">
-                                        </div>
-                                    </div>
+                        <mat-form-field class="mr-sm-2">
+                            <mat-label>Parameter Name</mat-label>
+                            <input matInput formControlName="parameterName">
+                        </mat-form-field>
 
-                                    <!-- Style de l'en-tête -->
-                                    <div class="style-editor" formGroupName="style">
-                                        <h6>Style de la cellule</h6>
-                                        <div class="style-grid">
-                                            <!-- Ligne 1 -->
-                                            <div class="form-field">
-                                                <label>Style de cellule</label>
-                                                <input type="text" formControlName="cellStyle">
-                                            </div>
+                        <mat-form-field class="mr-sm-2">
+                            <mat-label>Parameter Value</mat-label>
+                            <input matInput formControlName="parameterValue">
+                        </mat-form-field>
 
-                                            <div class="form-field">
-                                                <label>Format de cellule</label>
-                                                <input type="text" formControlName="cellFormat">
-                                            </div>
-
-                                            <!-- Ligne 2 -->
-                                            <div class="form-field">
-                                                <label>Couleur de fond</label>
-                                                <input type="color" formControlName="backgroundColor">
-                                            </div>
-
-                                            <div class="form-field">
-                                                <label>Couleur de premier plan</label>
-                                                <input type="color" formControlName="foregroundColor">
-                                            </div>
-
-                                            <!-- Ligne 3 -->
-                                            <div class="form-field">
-                                                <label>Alignement horizontal</label>
-                                                <select formControlName="horizontalAlignment">
-                                                    <option *ngFor="let align of alignmentOptions" [value]="align">{{align}}</option>
-                                                </select>
-                                            </div>
-
-                                            <div class="form-field">
-                                                <label>Alignement vertical</label>
-                                                <select formControlName="verticalAlignment">
-                                                    <option *ngFor="let align of alignmentOptions" [value]="align">{{align}}</option>
-                                                </select>
-                                            </div>
-
-                                            <!-- Ligne 4 -->
-                                            <div class="form-field">
-                                                <label>Style de bordure</label>
-                                                <select formControlName="borderStyle">
-                                                    <option *ngFor="let border of borderStyles" [value]="border">{{border}}</option>
-                                                </select>
-                                            </div>
-
-                                            <div class="form-field">
-                                                <label>Nom de police</label>
-                                                <input type="text" formControlName="fontName">
-                                            </div>
-
-                                            <!-- Ligne 5 -->
-                                            <div class="form-field">
-                                                <label>Couleur de police</label>
-                                                <input type="color" formControlName="fontColor">
-                                            </div>
-
-                                            <div class="form-field">
-                                                <label>Taille de police (8-72)</label>
-                                                <input type="number" formControlName="fontHeight" min="8" max="72">
-                                            </div>
-
-                                            <!-- Ligne 6 -->
-                                            <div class="form-field">
-                                                <label>Emphase typographique</label>
-                                                <select formControlName="fontTypographicEmphasis">
-                                                    <option *ngFor="let emphasis of fontEmphases" [value]="emphasis">{{emphasis}}</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <button type="button" (click)="sheet.get('headers').removeAt(headerIndex)">×</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Champs -->
-                    <div class="sub-section">
-                        <h5>Champs
-                            <button type="button" (click)="addXlsField(sheetIndex)">+ Ajouter</button>
-                        </h5>
-
-                        <div formArrayName="fields">
-                            <div *ngFor="let field of sheet.get('fields').controls; let fieldIndex = index"
-                                 [formGroupName]="fieldIndex">
-                                <div class="field-container">
-                                    <div class="form-row">
-                                        <div class="form-field">
-                                            <label>Nom du champ *</label>
-                                            <input type="text" formControlName="fieldName">
-                                        </div>
-
-                                        <div class="form-field">
-                                            <label>Ordre *</label>
-                                            <input type="number" formControlName="fieldOrder" min="0">
-                                        </div>
-                                    </div>
-
-                                    <!-- Style du champ -->
-                                    <div class="style-editor" formGroupName="style">
-                                        <!-- [Même structure que pour les en-têtes] -->
-                                    </div>
-
-                                    <button type="button" (click)="sheet.get('fields').removeAt(fieldIndex)">×</button>
-                                </div>
-                            </div>
-                        </div>
+                        <button mat-icon-button (click)="sqlParameters.removeAt(i)">
+                            <mat-icon>delete</mat-icon>
+                        </button>
                     </div>
                 </div>
             </div>
-        </div>
+            <button mat-stroked-button class="mr-sm-2" type="button" (click)="addSqlParameter()">
+                <mat-icon>add</mat-icon> Add Parameter
+            </button>
+        </mat-card-content>
+    </mat-card>
 
-        <button type="button" (click)="addXlsSheet()">+ Ajouter une feuille</button>
-    </div>
-
-    <!-- Section SQL -->
-    <div class="form-section">
-        <h3>Paramètres SQL</h3>
-
-        <div class="form-row">
-            <div class="form-field full-width">
-                <label>Requête SQL *</label>
-                <textarea formControlName="sqlQuery" rows="5"></textarea>
-            </div>
-        </div>
-
-        <h4>Paramètres
-            <button type="button" (click)="addSqlParameter()">+ Ajouter</button>
-        </h4>
-
-        <div formArrayName="sqlParameters">
-            <div *ngFor="let param of sqlParameters.controls; let i = index" [formGroupName]="i">
-                <div class="parameter-container">
-                    <div class="form-row">
-                        <div class="form-field">
-                            <label>Type *</label>
-                            <input type="text" formControlName="parameterType">
-                        </div>
-
-                        <div class="form-field">
-                            <label>Nom *</label>
-                            <input type="text" formControlName="parameterName">
-                        </div>
-
-                        <div class="form-field">
-                            <label>Valeur *</label>
-                            <input type="text" formControlName="parameterValue">
-                        </div>
-                    </div>
-                    <button type="button" (click)="removeSqlParameter(i)">×</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" [disabled]="!extractionForm.valid">Sauvegarder</button>
+    <div class="row">
+        <button mat-stroked-button class="mr-sm-2" color="primary" type="button" routerLink="/extraction/list">
+            Cancel
+        </button>
+        <button mat-raised-button color="primary" type="submit" [disabled]="!extractionForm.valid">
+            Save Extraction
+        </button>
     </div>
 </form>
