@@ -161,3 +161,14 @@
         IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> service.launch(params));
         assertEquals("Unsupported extraction format: unsupported", thrown.getMessage());
     }
+
+
+/** ✅ Méthode utilitaire pour créer une extraction valide **/
+private JSonExtraction createTestExtraction() {
+JSonExtraction extraction = new JSonExtraction();
+extraction.setExtractionId(BigInteger.ONE);
+extraction.setExtractionName("Test Extraction");
+extraction.setExtractionPath("/tmp/test.csv");
+extraction.setExtractionType("csv");
+return extraction;
+}
