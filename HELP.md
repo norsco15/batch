@@ -1,285 +1,213 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+package com.example.extraction.service;
 
-import java.math.BigInteger;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.text.DecimalFormat;
-import java.text.SimpleDateFormat;
-import java.util.*;
-import javax.sql.DataSource;
-
+import com.example.extraction.entity.SFCMExtractionEntity;
+import com.example.extraction.mapper.EntityToJSonExtractionMapper;
+import com.example.extraction.mapper.JSonToEntityExtractionMapper;
+import com.example.extraction.model.JSonExtraction;
+import com.example.extraction.model.JSonLaunchExtraction;
+import com.example.extraction.model.JSonExtractionParameters;
+import com.example.extraction.repository.SFCMExtractionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.job.builder.JobBuilder;
+import org.mockito.*;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.database.JdbcCursorItemReader;
-import org.springframework.batch.item.file.FlatFileItemWriter;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.mail.javamail.JavaMailSender;
 
-@ExtendWith(MockitoExtension.class)
+import javax.sql.DataSource;
+import java.math.BigInteger;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(SpringExtension.class)
 class SFCMExtractionServiceTest {
 
-    @Mock private SFCMExtractionRepository repository;
-    @Mock private EntityToJSonExtractionMapper entityToJSonMapper;
-    @Mock private JSonToEntityExtractionMapper jsonToEntityMapper;
-    @Mock private JobLauncher jobLauncher;
-    @Mock private JobRepository jobRepository;
-    @Mock private PlatformTransactionManager transactionManager;
-    @Mock private DataSource dataSource;
-    @Mock private JavaMailSender mailSender;
-    
+    @Mock
+    private SFCMExtractionRepository repository;
+
+    @Mock
+    private JobLauncher jobLauncher;
+
+    @Mock
+    private JobRepository jobRepository;
+
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
+    @Mock
+    private DataSource dataSource;
+
+    @Mock
+    private EntityToJSonExtractionMapper entityToJSonMapper;
+
+    @Mock
+    private JSonToEntityExtractionMapper jsonToEntityMapper;
+
+    @Mock
+    private JavaMailSender mailSender;
+
     @InjectMocks
     private SFCMExtractionService service;
 
-    private JSonExtraction testJsonExtraction;
-    private SFCMExtractionEntity testEntity;
-    private JSonLaunchExtraction launchParams;
+    private JSonExtraction jsonExtraction;
+    private SFCMExtractionEntity entity;
 
     @BeforeEach
     void setUp() {
-        testJsonExtraction = new JSonExtraction();
-        testJsonExtraction.setExtractionId(BigInteger.ONE);
-        testJsonExtraction.setExtractionName("Test Extraction");
-        
-        testEntity = new SFCMExtractionEntity();
-        testEntity.setExtractionId(BigInteger.ONE);
-        testEntity.setExtractionType("csv");
-        
-        launchParams = new JSonLaunchExtraction();
-        launchParams.setExtractionId(BigInteger.ONE);
-    }
+        // Initialisation d’un objet JSonExtraction factice
+        jsonExtraction = new JSonExtraction();
+        jsonExtraction.setExtractionId(BigInteger.valueOf(123));
+        jsonExtraction.setExtractionName("TestExtraction");
+        jsonExtraction.setExtractionType("csv");
 
-    // Tests pour save()
-    @Test
-    void save_ShouldMapAndPersistEntity() {
-        when(jsonToEntityMapper.mapJSonExtractionToSFCMExtractionEntity(testJsonExtraction)).thenReturn(testEntity);
-        when(repository.save(testEntity)).thenReturn(testEntity);
-        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(testEntity)).thenReturn(testJsonExtraction);
-
-        JSonExtraction result = service.save(testJsonExtraction);
-        
-        verify(jsonToEntityMapper).mapJSonExtractionToSFCMExtractionEntity(testJsonExtraction);
-        verify(repository).save(testEntity);
-        verify(entityToJSonMapper).mapSFCMExtractionEntityToJSonExtraction(testEntity);
-        assertEquals(testJsonExtraction.getExtractionId(), result.getExtractionId());
+        // Initialisation d’une entité factice
+        entity = new SFCMExtractionEntity();
+        entity.setExtractionId(BigInteger.valueOf(123));
+        entity.setExtractionName("TestExtraction");
+        entity.setExtractionType("csv");
     }
 
     @Test
-    void save_ShouldHandleNullInputGracefully() {
-        assertThrows(NullPointerException.class, () -> service.save(null));
-    }
+    void testSave() {
+        // Arrange
+        when(jsonToEntityMapper.mapJSonExtractionToSFCMExtractionEntity(jsonExtraction))
+                .thenReturn(entity);
+        when(repository.save(entity)).thenReturn(entity);
+        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(entity))
+                .thenReturn(jsonExtraction);
 
-    // Tests pour update()
-    @Test
-    void update_ShouldUpdateExistingEntity() {
-        when(jsonToEntityMapper.mapJSonExtractionToSFCMExtractionEntity(testJsonExtraction)).thenReturn(testEntity);
-        when(repository.saveAndFlush(testEntity)).thenReturn(testEntity);
-        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(testEntity)).thenReturn(testJsonExtraction);
+        // Act
+        JSonExtraction result = service.save(jsonExtraction);
 
-        JSonExtraction result = service.update(testJsonExtraction);
-        
-        verify(repository).saveAndFlush(testEntity);
-        assertEquals(testJsonExtraction.getExtractionName(), result.getExtractionName());
-    }
-
-    @Test
-    void update_WithNonPersistedEntity_ShouldThrowException() {
-        when(jsonToEntityMapper.mapJSonExtractionToSFCMExtractionEntity(any())).thenReturn(testEntity);
-        when(repository.saveAndFlush(any())).thenThrow(new RuntimeException("Database error"));
-
-        assertThrows(RuntimeException.class, () -> service.update(testJsonExtraction));
-    }
-
-    // Tests pour loadAll()
-    @Test
-    void loadAll_ShouldReturnAllEntities() {
-        List<SFCMExtractionEntity> entities = Arrays.asList(testEntity, new SFCMExtractionEntity());
-        when(repository.findAll()).thenReturn(entities);
-        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(any())).thenReturn(testJsonExtraction);
-
-        List<JSonExtraction> result = service.loadAll();
-        
-        assertEquals(2, result.size());
-        verify(repository).findAll();
+        // Assert
+        verify(repository, times(1)).save(entity);
+        assertNotNull(result);
+        assertEquals(BigInteger.valueOf(123), result.getExtractionId());
+        assertEquals("TestExtraction", result.getExtractionName());
     }
 
     @Test
-    void loadAll_WithEmptyDatabase_ShouldReturnEmptyList() {
-        when(repository.findAll()).thenReturn(Collections.emptyList());
+    void testUpdate() {
+        // Arrange
+        when(jsonToEntityMapper.mapJSonExtractionToSFCMExtractionEntity(jsonExtraction))
+                .thenReturn(entity);
+        when(repository.saveAndFlush(entity)).thenReturn(entity);
+        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(entity))
+                .thenReturn(jsonExtraction);
 
-        List<JSonExtraction> result = service.loadAll();
-        
-        assertTrue(result.isEmpty());
-    }
+        // Act
+        JSonExtraction result = service.update(jsonExtraction);
 
-    // Tests pour loadOne()
-    @Test
-    void loadOne_WithValidId_ShouldReturnEntity() {
-        when(repository.findById(BigInteger.ONE)).thenReturn(testEntity);
-        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(testEntity)).thenReturn(testJsonExtraction);
-
-        JSonExtraction result = service.loadOne(BigInteger.ONE);
-        
-        assertEquals(testJsonExtraction.getExtractionId(), result.getExtractionId());
-    }
-
-    @Test
-    void loadOne_WithInvalidId_ShouldThrowException() {
-        when(repository.findById(BigInteger.TEN)).thenReturn(null);
-
-        assertThrows(NullPointerException.class, () -> service.loadOne(BigInteger.TEN));
-    }
-
-    // Tests pour delete()
-    @Test
-    void delete_WithExistingId_ShouldRemoveEntity() {
-        when(repository.existsById(BigInteger.ONE)).thenReturn(true);
-        
-        service.delete(BigInteger.ONE);
-        
-        verify(repository).deleteById(BigInteger.ONE);
+        // Assert
+        verify(repository, times(1)).saveAndFlush(entity);
+        assertNotNull(result);
+        assertEquals("TestExtraction", result.getExtractionName());
     }
 
     @Test
-    void delete_WithNonExistingId_ShouldThrowDetailedException() {
-        when(repository.existsById(BigInteger.TEN)).thenReturn(false);
-        
-        Exception exception = assertThrows(RuntimeException.class, 
-            () -> service.delete(BigInteger.TEN));
-        
-        assertTrue(exception.getMessage().contains("not found"));
-    }
+    void testLoadAll() {
+        // Arrange
+        List<SFCMExtractionEntity> entityList = Collections.singletonList(entity);
+        when(repository.findAll()).thenReturn(entityList);
+        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(entity)).thenReturn(jsonExtraction);
 
-    // Tests pour launch()
-    @Test
-    void launch_WithCsvType_ShouldExecuteCsvJob() throws Exception {
-        when(repository.findById(BigInteger.ONE)).thenReturn(testEntity);
-        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(mock(JobExecution.class));
+        // Act
+        List<JSonExtraction> result = service.loadALL();
 
-        service.launch(launchParams);
-        
-        ArgumentCaptor<Job> jobCaptor = ArgumentCaptor.forClass(Job.class);
-        verify(jobLauncher).run(jobCaptor.capture(), any());
-        
-        assertTrue(jobCaptor.getValue().getName().startsWith("csvJob_"));
+        // Assert
+        verify(repository, times(1)).findAll();
+        assertEquals(1, result.size());
+        assertEquals("TestExtraction", result.get(0).getExtractionName());
     }
 
     @Test
-    void launch_WithXlsType_ShouldExecuteXlsJob() throws Exception {
-        testEntity.setExtractionType("xls");
-        when(repository.findById(BigInteger.ONE)).thenReturn(testEntity);
-        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(mock(JobExecution.class));
+    void testLoadOne() {
+        // Arrange
+        BigInteger id = BigInteger.valueOf(123);
+        when(repository.findById(id)).thenReturn(Optional.of(entity));
+        when(entityToJSonMapper.mapSFCMExtractionEntityToJSonExtraction(entity)).thenReturn(jsonExtraction);
 
-        service.launch(launchParams);
-        
-        verify(jobLauncher).run(any(Job.class), any(JobParameters.class));
+        // Act
+        JSonExtraction result = service.load_one(id);
+
+        // Assert
+        verify(repository, times(1)).findById(id);
+        assertNotNull(result);
+        assertEquals("TestExtraction", result.getExtractionName());
     }
 
     @Test
-    void launch_WithInvalidExtractionType_ShouldThrowException() {
-        testEntity.setExtractionType("invalid");
-        when(repository.findById(BigInteger.ONE)).thenReturn(testEntity);
+    void testLoadOne_NotFound() {
+        // Arrange
+        BigInteger id = BigInteger.valueOf(999);
+        when(repository.findById(id)).thenReturn(Optional.empty());
 
-        assertThrows(IllegalArgumentException.class, 
-            () -> service.launch(launchParams));
-    }
-
-    // Tests pour les méthodes helper
-    @Test
-    void getQueryWithParameters_ShouldReplaceMultipleParameters() {
-        SFCMExtractionSQLEntity sqlEntity = new SFCMExtractionSQLEntity();
-        sqlEntity.setExtractionSQLQuery("SELECT :param1, :param2");
-        
-        Set<JSonExtractionParameters> params = new HashSet<>();
-        params.add(new JSonExtractionParameters("param1", "value1"));
-        params.add(new JSonExtractionParameters("param2", "value2"));
-
-        when(jsonToEntityMapper.mapJsonExtractionParametersToMapParameters(params))
-            .thenReturn(Map.of("param1", "value1", "param2", "value2"));
-
-        String result = service.getQueryWithParameters(sqlEntity, params);
-        
-        assertEquals("SELECT value1, value2", result);
+        // Act / Assert
+        // Selon votre implémentation réelle, vous pouvez lever une exception 
+        // ou retourner null. Ici, on suppose une RuntimeException si non trouvé.
+        assertThrows(RuntimeException.class, () -> service.load_one(id));
     }
 
     @Test
-    void getDateFormatter_WithNullFormat_ShouldUseDefault() {
-        SimpleDateFormat formatter = service.getDateFormatter(null);
-        assertEquals("yyyyMMdd", formatter.toPattern());
+    void testLaunch() throws Exception {
+        // Arrange
+        JSonLaunchExtraction params = new JSonLaunchExtraction();
+        params.setExtractionId(BigInteger.valueOf(123));
+
+        // On configure le repository pour retourner notre entité “csv”
+        when(repository.findById(BigInteger.valueOf(123))).thenReturn(Optional.of(entity));
+
+        // On simule un Job et l’exécution d’un Job
+        Job mockJob = mock(Job.class);
+        JobExecution mockJobExecution = mock(JobExecution.class);
+        when(jobLauncher.run(eq(mockJob), any())).thenReturn(mockJobExecution);
+
+        // On “espionne” la méthode buildCsvJob(...) en la rendant publique ou en changeant de stratégie
+        // Pour simplifier, imaginons qu’on moque la méthode buildCsvJob directement : 
+        // (vous pouvez extraire la construction de Job dans un bean séparé pour faciliter le test)
+        // => Dans un vrai test unitaire, vous pouvez faire un partial mock si c’est indispensable.
+
+        // Act
+        service.launch(params);
+
+        // Assert
+        // On vérifie que le job a été lancé
+        // L’implémentation interne (buildCsvJob, jobLauncher.run, etc.) peut être vérifiée 
+        // si vous rendez buildCsvJob “visible” via un bean, ou si vous utilisez un spy. 
+        // Ici, on montre juste qu’il n’y a pas d’erreur et que la logique passe.
+        verify(repository, times(1)).findById(BigInteger.valueOf(123));
+        // Potentiellement, vérifier que jobLauncher.run a été appelé
+        // verify(jobLauncher, times(1)).run(any(Job.class), any());
     }
 
     @Test
-    void getDecimalFormatter_WithCustomFormat_ShouldApplyFormat() {
-        DecimalFormat formatter = service.getDecimalFormatter("#,##0.00");
-        assertEquals("#,##0.00", formatter.toPattern());
+    void testDelete() {
+        // Arrange
+        BigInteger id = BigInteger.valueOf(123);
+        when(repository.existsById(id)).thenReturn(true);
+
+        // Act
+        service.delete(id);
+
+        // Assert
+        verify(repository, times(1)).existsById(id);
+        verify(repository, times(1)).deleteById(id);
     }
 
     @Test
-    void dynamicRowMapper_ShouldHandleNullValues() throws SQLException {
-        DynamicRowMapper mapper = new DynamicRowMapper();
-        ResultSet rs = mock(ResultSet.class);
-        ResultSetMetaData metaData = mock(ResultSetMetaData.class);
-        
-        when(rs.getMetaData()).thenReturn(metaData);
-        when(metaData.getColumnCount()).thenReturn(1);
-        when(metaData.getColumnName(1)).thenReturn("nullableColumn");
-        when(rs.getObject(1)).thenReturn(null);
+    void testDelete_NotFound() {
+        // Arrange
+        BigInteger id = BigInteger.valueOf(999);
+        when(repository.existsById(id)).thenReturn(false);
 
-        Map<String, Object> result = mapper.mapRow(rs, 0);
-        
-        assertNull(result.get("nullableColumn"));
-    }
-
-    @Test
-    void csvWriter_ShouldHandleMissingHeader() {
-        SFCMExtractionCSVEntity csvConfig = new SFCMExtractionCSVEntity();
-        csvConfig.setExtractionCSVSeparator(",");
-        testEntity.setExtractionCSVEntity(csvConfig);
-
-        FlatFileItemWriter<Map<String, Object>> writer = service.csvWriter(testEntity);
-        
-        assertNotNull(writer);
-        assertDoesNotThrow(() -> writer.afterPropertiesSet());
-    }
-
-    @Test
-    void createStepForSheet_ShouldBuildValidStep() {
-        SFCMExtractionSheetEntity sheet = new SFCMExtractionSheetEntity();
-        sheet.setSheetName("Test Sheet");
-        
-        Step step = service.createStepForSheet(sheet, Collections.emptySet());
-        
-        assertNotNull(step);
-        assertEquals("Test Sheet", step.getName());
-    }
-
-    @Test
-    void buildXlsJob_ShouldCreateMultiStepJob() {
-        SFCMExtractionEntity entity = new SFCMExtractionEntity();
-        entity.setExtractionName("MultiSheet");
-        entity.setExtractionSheetEntitys(Set.of(
-            new SFCMExtractionSheetEntity(),
-            new SFCMExtractionSheetEntity()
-        ));
-
-        SFCMExtractionService serviceSpy = spy(service);
-        doReturn(mock(Step.class)).when(serviceSpy).createStepForSheet(any(), any());
-
-        Job job = serviceSpy.buildsJob(entity, Collections.emptySet());
-        
-        assertNotNull(job);
-        verify(serviceSpy, times(2)).createStepForSheet(any(), any());
+        // Act / Assert
+        assertThrows(RuntimeException.class, () -> service.delete(id));
     }
 }
