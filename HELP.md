@@ -1,75 +1,159 @@
-@Test
-void testLaunch_csv() throws Exception {
-// 1) Prépare un JSonLaunchExtraction (paramètre d’entrée)
-JSonLaunchExtraction params = new JSonLaunchExtraction();
-params.setExtractionId(BigInteger.valueOf(123));
+package com.example.extraction.mapper;
 
-    // 2) Crée une entité "csv" assez complète
-    SFCMExtractionEntity entity = new SFCMExtractionEntity();
-    entity.setExtractionId(BigInteger.valueOf(123));
-    entity.setExtractionName("TestExtractionCSV");
-    entity.setExtractionType("csv");
+import com.example.extraction.entity.*;
+import com.example.extraction.model.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-    // On crée un CSVEntity factice
-    SFCMExtractionCSVEntity csvEntity = new SFCMExtractionCSVEntity();
-    csvEntity.setExtractionCSVId(BigInteger.valueOf(999));
-    // Peut-être qu’on a besoin d’un extractionSQLEntity aussi
-    SFCMExtractionSQLEntity sqlEntity = new SFCMExtractionSQLEntity();
-    sqlEntity.setExtractionSQLId(BigInteger.valueOf(111));
-    sqlEntity.setExtractionSQLQuery("SELECT * FROM table_csv");
-    csvEntity.setExtractionSQLEntity(sqlEntity);
+import java.math.BigInteger;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
-    // On rattache le CSVEntity à l’entité principale
-    entity.setExtractionCSVEntity(csvEntity);
+import static org.junit.jupiter.api.Assertions.*;
 
-    // 3) On mock le repository.findById(...) pour qu’il renvoie cette entité
-    when(repository.findById(BigInteger.valueOf(123))).thenReturn(Optional.of(entity));
+class JSonToEntityExtractionMapperTest {
 
-    // On peut aussi mocker jobLauncher.run(...) si besoin
-    // jobLauncher.run(...) -> un mock de JobExecution
-    // etc.
+    private JSonToEntityExtractionMapper mapper;
 
-    // 4) Appel de la méthode launch
-    service.launch(params);
+    @BeforeEach
+    void setUp() {
+        mapper = new JSonToEntityExtractionMapper();
+    }
 
-    // 5) Vérifications
-    verify(repository, times(1)).findById(BigInteger.valueOf(123));
-    verify(jobLauncher, times(1)).run(any(), any()); // on peut affiner
-    // ...
-}
-@Test
-void testLaunch_xls() throws Exception {
-// 1) Prépare un JSonLaunchExtraction (paramètre d’entrée)
-JSonLaunchExtraction params = new JSonLaunchExtraction();
-params.setExtractionId(BigInteger.valueOf(124));
+    @Test
+    void testMapJSonExtractionToSFCMExtractionEntity() {
+        // GIVEN
+        JSonExtraction json = new JSonExtraction();
+        json.setExtractionId(BigInteger.valueOf(123));
+        json.setExtractionName("TestExtraction");
+        json.setExtractionPath("/tmp");
+        json.setExtractionType("xls");
+        json.setExtractionMail("test@mail.com");
 
-    // 2) Crée une entité "xls" assez complète
-    SFCMExtractionEntity entity = new SFCMExtractionEntity();
-    entity.setExtractionId(BigInteger.valueOf(124));
-    entity.setExtractionName("TestExtractionXLS");
-    entity.setExtractionType("xls");
+        // CSV
+        JSonExtractionCSV jsonCsv = new JSonExtractionCSV();
+        jsonCsv.setExtractionCSVId(BigInteger.valueOf(999));
+        jsonCsv.setExtractionDateFormat("yyyy-MM-dd");
+        json.setJsonExtractionCSV(jsonCsv);
 
-    // Ajout d’au moins un sheet
-    SFCMExtractionSheetEntity sheetEntity = new SFCMExtractionSheetEntity();
-    sheetEntity.setExtractionSheetId(BigInteger.valueOf(1000));
-    sheetEntity.setSheetName("MySheet");
-    // Dans le code "XLS", vous appelez sheetEntity.getExtractionSQLEntity() 
-    // => on doit le set si nécessaire :
-    SFCMExtractionSQLEntity sqlEntity = new SFCMExtractionSQLEntity();
-    sqlEntity.setExtractionSQLId(BigInteger.valueOf(111));
-    sqlEntity.setExtractionSQLQuery("SELECT * FROM table_xls");
-    sheetEntity.setExtractionSQLEntity(sqlEntity);
+        // Mail
+        JSonExtractionMail jsonMail = new JSonExtractionMail();
+        jsonMail.setExtractionMailId(BigInteger.valueOf(1001));
+        jsonMail.setMailSubject("Subject");
+        json.setJsonExtractionMail(jsonMail);
 
-    // rattachez le sheet au set
-    Set<SFCMExtractionSheetEntity> sheets = new HashSet<>();
-    sheets.add(sheetEntity);
-    entity.setExtractionSheetEntitys(sheets);
+        // WHEN
+        SFCMExtractionEntity result = mapper.mapJSonExtractionToSFCMExtractionEntity(json);
 
-    when(repository.findById(BigInteger.valueOf(124))).thenReturn(Optional.of(entity));
+        // THEN
+        assertNotNull(result);
+        assertEquals(BigInteger.valueOf(123), result.getExtractionId());
+        assertEquals("TestExtraction", result.getExtractionName());
+        assertEquals("/tmp", result.getExtractionPath());
+        assertEquals("xls", result.getExtractionType());
+        assertEquals("test@mail.com", result.getExtractionMail());
 
-    service.launch(params);
+        // Vérifier CSV
+        SFCMExtractionCSVEntity csvEntity = result.getExtractionCSVEntity();
+        assertNotNull(csvEntity);
+        assertEquals(BigInteger.valueOf(999), csvEntity.getExtractionCSVId());
+        assertEquals("yyyy-MM-dd", csvEntity.getExtractionDateFormat());
 
-    // Vérifications
-    verify(repository, times(1)).findById(BigInteger.valueOf(124));
-    verify(jobLauncher, times(1)).run(any(), any());
+        // Vérifier Mail
+        SFCMExtractionMailEntity mailEntity = result.getExtractionMailEntity();
+        assertNotNull(mailEntity);
+        assertEquals(BigInteger.valueOf(1001), mailEntity.getExtractionMailId());
+        assertEquals("Subject", mailEntity.getMailSubject());
+    }
+
+    @Test
+    void testMapJsonExtractionMailToExtractionMailEntity() {
+        // GIVEN
+        JSonExtractionMail jsonMail = new JSonExtractionMail();
+        jsonMail.setExtractionMailId(BigInteger.valueOf(1));
+        jsonMail.setMailSubject("TestSubject");
+        jsonMail.setMailBody("TestBody");
+        jsonMail.setMailFrom("from@test.com");
+        jsonMail.setMailTo("to@test.com");
+        jsonMail.setMailCc("cc@test.com");
+        jsonMail.setAttachFile("file.zip");
+        jsonMail.setZipFile("fileArchive.zip");
+
+        // WHEN
+        SFCMExtractionMailEntity result = JSonToEntityExtractionMapper.mapJsonExtractionMailToExtractionMailEntity(jsonMail);
+
+        // THEN
+        assertNotNull(result);
+        assertEquals(BigInteger.valueOf(1), result.getExtractionMailId());
+        assertEquals("TestSubject", result.getMailSubject());
+        assertEquals("TestBody", result.getMailBody());
+        assertEquals("from@test.com", result.getMailFrom());
+        assertEquals("to@test.com", result.getMailTo());
+        assertEquals("cc@test.com", result.getMailCc());
+        assertEquals("file.zip", result.getAttachFile());
+        assertEquals("fileArchive.zip", result.getZipFile());
+    }
+
+    @Test
+    void testMapJsonExtractionSheetToExtractionSheetEntity() {
+        // GIVEN
+        JSonExtractionSheet jsonSheet = new JSonExtractionSheet();
+        jsonSheet.setExtractionSheetId(BigInteger.valueOf(200));
+        jsonSheet.setSheetOrder(BigInteger.ONE);
+        jsonSheet.setSheetName("MySheet");
+
+        // SQL
+        JSonExtractionSQL jsonSql = new JSonExtractionSQL();
+        jsonSql.setExtractionSQLId(BigInteger.valueOf(300));
+        jsonSql.setExtractionSQLQuery("SELECT * FROM table");
+        jsonSheet.setJsonExtractionSQL(jsonSql);
+
+        // Header
+        JSonExtractionSheetHeader header = new JSonExtractionSheetHeader();
+        header.setExtractionSheetHeaderId(BigInteger.valueOf(400));
+        header.setHeaderName("HeaderTest");
+        Set<JSonExtractionSheetHeader> headers = new HashSet<>();
+        headers.add(header);
+        jsonSheet.setJsonExtractionSheetHeader(headers);
+
+        // Field
+        JSonExtractionSheetField field = new JSonExtractionSheetField();
+        field.setExtractionSheetFieldId(BigInteger.valueOf(500));
+        field.setFieldName("FieldTest");
+        Set<JSonExtractionSheetField> fields = new HashSet<>();
+        fields.add(field);
+        jsonSheet.setJsonExtractionSheetField(fields);
+
+        // WHEN
+        SFCMExtractionSheetEntity result = JSonToEntityExtractionMapper.mapJsonExtractionSheetToExtractionSheetEntity(jsonSheet, null);
+
+        // THEN
+        assertNotNull(result);
+        assertEquals(BigInteger.valueOf(200), result.getExtractionSheetId());
+        assertEquals(BigInteger.ONE, result.getSheetOrder());
+        assertEquals("MySheet", result.getSheetName());
+
+        // SQL
+        SFCMExtractionSQLEntity sqlEntity = result.getExtractionSQLEntity();
+        assertNotNull(sqlEntity);
+        assertEquals(BigInteger.valueOf(300), sqlEntity.getExtractionSQLId());
+        assertEquals("SELECT * FROM table", sqlEntity.getExtractionSQLQuery());
+
+        // Header
+        assertNotNull(result.getExtractionSheetHeaderEntitys());
+        assertEquals(1, result.getExtractionSheetHeaderEntitys().size());
+        SFCMExtractionSheetHeaderEntity headerEntity = result.getExtractionSheetHeaderEntitys().iterator().next();
+        assertEquals(BigInteger.valueOf(400), headerEntity.getExtractionSheetHeaderId());
+        assertEquals("HeaderTest", headerEntity.getHeaderName());
+
+        // Field
+        assertNotNull(result.getExtractionSheetFieldEntitys());
+        assertEquals(1, result.getExtractionSheetFieldEntitys().size());
+        SFCMExtractionSheetFieldEntity fieldEntity = result.getExtractionSheetFieldEntitys().iterator().next();
+        assertEquals(BigInteger.valueOf(500), fieldEntity.getExtractionSheetFieldId());
+        assertEquals("FieldTest", fieldEntity.getFieldName());
+    }
+
+    // Vous pouvez faire de même pour mapJsonExtractionCSVToExtractionCSVEntity, etc.
 }
