@@ -1,7 +1,16 @@
 package com.example.extraction.mapper;
 
-import com.example.extraction.entity.*;
-import com.example.extraction.model.*;
+import com.example.extraction.entity.SFCMExtractionCSVEntity;
+import com.example.extraction.entity.SFCMExtractionEntity;
+import com.example.extraction.entity.SFCMExtractionMailEntity;
+import com.example.extraction.entity.SFCMExtractionSheetEntity;
+import com.example.extraction.entity.SFCMExtractionSQLEntity;
+import com.example.extraction.model.JSonExtraction;
+import com.example.extraction.model.JSonExtractionCSV;
+import com.example.extraction.model.JSonExtractionMail;
+import com.example.extraction.model.JSonExtractionSheet;
+import com.example.extraction.model.JSonExtractionSQL;
+import com.example.extraction.model.JSonLaunchExtraction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -20,90 +29,95 @@ class JSonToEntityExtractionMapperTest {
         mapper = new JSonToEntityExtractionMapper();
     }
 
+    /**
+     * Test de mapping d'un {@link JSonExtraction} en {@link SFCMExtractionEntity}
+     * en se concentrant sur le format CSV (jsonExtractionCSV non-null).
+     */
     @Test
-    void testMapJSonExtractionToSFCMExtractionEntity_Complete() {
-        // 1) Construire un JSonExtraction avec sous-objets
+    void testMapJSonExtractionToSFCMExtractionEntity_CsvOnly() {
+        // 1) Construire un JSonExtraction avec format CSV
         JSonExtraction json = new JSonExtraction();
         json.setExtractionId(BigInteger.valueOf(1));
-        json.setExtractionName("Full JSON");
-        json.setExtractionType("xls");
-        json.setExtractionPath("/some/path");
+        json.setExtractionName("My CSV Extraction");
+        json.setExtractionType("csv");
+        json.setExtractionPath("/csv/path");
         json.setExtractionMail("info@test.com");
 
-        // CSV
+        // Sous-objet CSV
         JSonExtractionCSV jsonCSV = new JSonExtractionCSV();
         jsonCSV.setExtractionCSVId(BigInteger.valueOf(10));
         jsonCSV.setExtractionDateFormat("yyyyMMdd");
-        jsonCSV.setExtractionCSVHeader("H1,H2,H3");
+        jsonCSV.setExtractionCSVHeader("col1,col2,col3");
+        jsonCSV.setExtpactionCSVSeparator(",");
+        // SQL
+        JSonExtractionSQL jsonSql = new JSonExtractionSQL();
+        jsonSql.setExtractionSQLId(BigInteger.valueOf(100));
+        jsonSql.setExtractionSQLQuery("SELECT * FROM csv_table");
+        jsonCSV.setJsonExtractionSQL(jsonSql);
+
         json.setJsonExtractionCSV(jsonCSV);
 
-        // Mail
+        // Sous-objet Mail (facultatif si on veut tester la partie mail aussi)
         JSonExtractionMail jsonMail = new JSonExtractionMail();
         jsonMail.setExtractionMailId(BigInteger.valueOf(20));
-        jsonMail.setMailSubject("MailSubject");
+        jsonMail.setMailSubject("MailSubject for CSV");
         jsonMail.setMailBody("Body here");
         json.setJsonExtractionMail(jsonMail);
 
-        // Sheets
-        JSonExtractionSheet sheet = new JSonExtractionSheet();
-        sheet.setExtractionSheetId(BigInteger.valueOf(30));
-        sheet.setSheetName("Sheet1");
-        // SQL
-        JSonExtractionSQL sheetSQL = new JSonExtractionSQL();
-        sheetSQL.setExtractionSQLId(BigInteger.valueOf(40));
-        sheetSQL.setExtractionSQLQuery("SELECT * FROM table");
-        sheet.setJsonExtractionSQL(sheetSQL);
-
-        Set<JSonExtractionSheet> sheets = new HashSet<>();
-        sheets.add(sheet);
-        json.setJsonExtractionSheet(sheets);
+        // Note : on n’ajoute pas de Sheets => c’est un test “focalisé CSV”
 
         // 2) Appel de la méthode de mapping
         SFCMExtractionEntity entity = mapper.mapJSonExtractionToSFCMExtractionEntity(json);
 
         // 3) Vérifications
-        assertNotNull(entity);
+        assertNotNull(entity, "L'entité ne doit pas être null");
         assertEquals(BigInteger.valueOf(1), entity.getExtractionId());
-        assertEquals("Full JSON", entity.getExtractionName());
-        assertEquals("xls", entity.getExtractionType());
-        assertEquals("/some/path", entity.getExtractionPath());
+        assertEquals("My CSV Extraction", entity.getExtractionName());
+        assertEquals("csv", entity.getExtractionType());
+        assertEquals("/csv/path", entity.getExtractionPath());
         assertEquals("info@test.com", entity.getExtractionMail());
 
-        // CSV
+        // Vérifier CSV
         SFCMExtractionCSVEntity csvEntity = entity.getExtractionCSVEntity();
-        assertNotNull(csvEntity);
+        assertNotNull(csvEntity, "L'entité CSV ne doit pas être null");
         assertEquals(BigInteger.valueOf(10), csvEntity.getExtractionCSVId());
         assertEquals("yyyyMMdd", csvEntity.getExtractionDateFormat());
-        assertEquals("H1,H2,H3", csvEntity.getExtractionCSVHeader());
+        assertEquals("col1,col2,col3", csvEntity.getExtractionCSVHeader());
+        assertEquals(",", csvEntity.getExtractionCSVSeparator());
 
-        // Mail
+        // Vérifier SQL interne
+        SFCMExtractionSQLEntity sqlEntity = csvEntity.getExtractionSQLEntity();
+        assertNotNull(sqlEntity, "Le SQL Entity ne doit pas être null");
+        assertEquals(BigInteger.valueOf(100), sqlEntity.getExtractionSQLId());
+        assertEquals("SELECT * FROM csv_table", sqlEntity.getExtractionSQLQuery());
+
+        // Vérifier Mail
         SFCMExtractionMailEntity mailEntity = entity.getExtractionMailEntity();
-        assertNotNull(mailEntity);
+        assertNotNull(mailEntity, "Le mail entity ne doit pas être null");
         assertEquals(BigInteger.valueOf(20), mailEntity.getExtractionMailId());
-        assertEquals("MailSubject", mailEntity.getMailSubject());
+        assertEquals("MailSubject for CSV", mailEntity.getMailSubject());
         assertEquals("Body here", mailEntity.getMailBody());
 
-        // Sheets
-        assertNotNull(entity.getExtractionSheetEntitys());
-        assertEquals(1, entity.getExtractionSheetEntitys().size());
-        SFCMExtractionSheetEntity sheetEntity = entity.getExtractionSheetEntitys().iterator().next();
-        assertEquals(BigInteger.valueOf(30), sheetEntity.getExtractionSheetId());
-        assertEquals("Sheet1", sheetEntity.getSheetName());
-
-        // SQL
-        SFCMExtractionSQLEntity sqlEntity = sheetEntity.getExtractionSQLEntity();
-        assertNotNull(sqlEntity);
-        assertEquals(BigInteger.valueOf(40), sqlEntity.getExtractionSQLId());
-        assertEquals("SELECT * FROM table", sqlEntity.getExtractionSQLQuery());
+        // Sheets => null ou vide, selon votre code
+        assertTrue(
+            entity.getExtractionSheetEntitys() == null ||
+            entity.getExtractionSheetEntitys().isEmpty(),
+            "Puisqu’on n’a pas fourni de Sheets, ce set doit être null ou vide"
+        );
     }
 
+    /**
+     * Test de mapping d'un {@link JSonExtraction} partiel (pas de CSV, pas de mail, etc.)
+     * pour vérifier qu'on ne plante pas avec des champs null.
+     */
     @Test
     void testMapJSonExtractionToSFCMExtractionEntity_NullSubObjects() {
         // 1) JSON partiel
         JSonExtraction json = new JSonExtraction();
         json.setExtractionId(BigInteger.valueOf(2));
         json.setExtractionName("Partial JSON");
-        // Pas de CSV, pas de mail, pas de sheets
+        json.setExtractionType("csv"); 
+        // pas de CSV, pas de mail
 
         // 2) Appel
         SFCMExtractionEntity entity = mapper.mapJSonExtractionToSFCMExtractionEntity(json);
@@ -112,10 +126,11 @@ class JSonToEntityExtractionMapperTest {
         assertNotNull(entity);
         assertEquals(BigInteger.valueOf(2), entity.getExtractionId());
         assertEquals("Partial JSON", entity.getExtractionName());
+        assertEquals("csv", entity.getExtractionType());
 
         // Sous-objets doivent être null
         assertNull(entity.getExtractionCSVEntity());
         assertNull(entity.getExtractionMailEntity());
-        assertNull(entity.getExtractionSheetEntitys()); // ou vide, selon votre code
+        assertNull(entity.getExtractionSheetEntitys());
     }
 }
