@@ -1,136 +1,243 @@
 package com.example.extraction.mapper;
 
-import com.example.extraction.entity.SFCMExtractionCSVEntity;
-import com.example.extraction.entity.SFCMExtractionEntity;
-import com.example.extraction.entity.SFCMExtractionMailEntity;
-import com.example.extraction.entity.SFCMExtractionSheetEntity;
-import com.example.extraction.entity.SFCMExtractionSQLEntity;
-import com.example.extraction.model.JSonExtraction;
-import com.example.extraction.model.JSonExtractionCSV;
-import com.example.extraction.model.JSonExtractionMail;
-import com.example.extraction.model.JSonExtractionSheet;
-import com.example.extraction.model.JSonExtractionSQL;
-import com.example.extraction.model.JSonLaunchExtraction;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import com.example.extraction.entity.*;
+import com.example.extraction.model.*;
+import org.springframework.stereotype.Component;
 
-import java.math.BigInteger;
-import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.*;
+@Component
+public class EntityToJSonExtractionMapper {
 
-class JSonToEntityExtractionMapperTest {
+    public JSonExtraction mapSFCMExtractionEntityToJSonExtraction(SFCMExtractionEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtraction json = new JSonExtraction();
+        json.setExtractionId(entity.getExtractionId());
+        json.setExtractionName(entity.getExtractionName());
+        json.setExtractionPath(entity.getExtractionPath());
+        json.setExtractionType(entity.getExtractionType());
+        json.setExtractionMail(entity.getExtractionMail());
 
-    private JSonToEntityExtractionMapper mapper;
+        // Mail
+        if (entity.getExtractionMailEntity() != null) {
+            json.setJsonExtractionMail(mapSFCMExtractionMailEntityToJSonExtractionMail(entity.getExtractionMailEntity()));
+        }
 
-    @BeforeEach
-    void setUp() {
-        mapper = new JSonToEntityExtractionMapper();
+        // CSV
+        if (entity.getExtractionCSVEntity() != null) {
+            json.setJsonExtractionCSV(mapSFCMExtractionCSVEntityToJSonExtractionCSV(entity.getExtractionCSVEntity()));
+        }
+
+        // Sheets
+        if (entity.getExtractionSheetEntitys() != null && !entity.getExtractionSheetEntitys().isEmpty()) {
+            json.setJsonExtractionSheet(mapSetOfSFCMExtractionSheetEntityToSetOfJSonExtractionSheet(entity.getExtractionSheetEntitys()));
+        }
+
+        return json;
     }
 
-    /**
-     * Test de mapping d'un {@link JSonExtraction} en {@link SFCMExtractionEntity}
-     * en se concentrant sur le format CSV (jsonExtractionCSV non-null).
-     */
-    @Test
-    void testMapJSonExtractionToSFCMExtractionEntity_CsvOnly() {
-        // 1) Construire un JSonExtraction avec format CSV
-        JSonExtraction json = new JSonExtraction();
-        json.setExtractionId(BigInteger.valueOf(1));
-        json.setExtractionName("My CSV Extraction");
-        json.setExtractionType("csv");
-        json.setExtractionPath("/csv/path");
-        json.setExtractionMail("info@test.com");
+    // ---------------------------------------------------------------------------------
+    // MAIL
+    // ---------------------------------------------------------------------------------
+    private JSonExtractionMail mapSFCMExtractionMailEntityToJSonExtractionMail(SFCMExtractionMailEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionMail json = new JSonExtractionMail();
+        json.setExtractionMailId(entity.getExtractionMailId());
+        json.setAttachFile(entity.getAttachFile());
+        json.setMailBody(entity.getMailBody());
+        json.setMailCc(entity.getMailCc());
+        json.setMailFrom(entity.getMailFrom());
+        json.setMailSubject(entity.getMailSubject());
+        json.setMailTo(entity.getMailTo());
+        json.setZipFile(entity.getZipFile());
+        return json;
+    }
 
-        // Sous-objet CSV
-        JSonExtractionCSV jsonCSV = new JSonExtractionCSV();
-        jsonCSV.setExtractionCSVId(BigInteger.valueOf(10));
-        jsonCSV.setExtractionDateFormat("yyyyMMdd");
-        jsonCSV.setExtractionCSVHeader("col1,col2,col3");
-        jsonCSV.setExtpactionCSVSeparator(",");
+    // ---------------------------------------------------------------------------------
+    // CSV
+    // ---------------------------------------------------------------------------------
+    private JSonExtractionCSV mapSFCMExtractionCSVEntityToJSonExtractionCSV(SFCMExtractionCSVEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionCSV json = new JSonExtractionCSV();
+        json.setExtractionCSVId(entity.getExtractionCSVId());
+        json.setExtractionCSVHeader(entity.getExtractionCSVHeader());
+        json.setExtpactionCSVSeparator(entity.getExtractionCSVSeparator());
+        json.setExtractionDateFormat(entity.getExtractionDateFormat());
+        json.setExtractionNumberFormat(entity.getExtractionNumberFormat());
+
         // SQL
-        JSonExtractionSQL jsonSql = new JSonExtractionSQL();
-        jsonSql.setExtractionSQLId(BigInteger.valueOf(100));
-        jsonSql.setExtractionSQLQuery("SELECT * FROM csv_table");
-        jsonCSV.setJsonExtractionSQL(jsonSql);
+        if (entity.getExtractionSQLEntity() != null) {
+            json.setJsonExtractionSQL(mapSFCMExtractionSQLEntityToJSonExtractionSQL(entity.getExtractionSQLEntity()));
+        }
 
-        json.setJsonExtractionCSV(jsonCSV);
-
-        // Sous-objet Mail (facultatif si on veut tester la partie mail aussi)
-        JSonExtractionMail jsonMail = new JSonExtractionMail();
-        jsonMail.setExtractionMailId(BigInteger.valueOf(20));
-        jsonMail.setMailSubject("MailSubject for CSV");
-        jsonMail.setMailBody("Body here");
-        json.setJsonExtractionMail(jsonMail);
-
-        // Note : on n’ajoute pas de Sheets => c’est un test “focalisé CSV”
-
-        // 2) Appel de la méthode de mapping
-        SFCMExtractionEntity entity = mapper.mapJSonExtractionToSFCMExtractionEntity(json);
-
-        // 3) Vérifications
-        assertNotNull(entity, "L'entité ne doit pas être null");
-        assertEquals(BigInteger.valueOf(1), entity.getExtractionId());
-        assertEquals("My CSV Extraction", entity.getExtractionName());
-        assertEquals("csv", entity.getExtractionType());
-        assertEquals("/csv/path", entity.getExtractionPath());
-        assertEquals("info@test.com", entity.getExtractionMail());
-
-        // Vérifier CSV
-        SFCMExtractionCSVEntity csvEntity = entity.getExtractionCSVEntity();
-        assertNotNull(csvEntity, "L'entité CSV ne doit pas être null");
-        assertEquals(BigInteger.valueOf(10), csvEntity.getExtractionCSVId());
-        assertEquals("yyyyMMdd", csvEntity.getExtractionDateFormat());
-        assertEquals("col1,col2,col3", csvEntity.getExtractionCSVHeader());
-        assertEquals(",", csvEntity.getExtractionCSVSeparator());
-
-        // Vérifier SQL interne
-        SFCMExtractionSQLEntity sqlEntity = csvEntity.getExtractionSQLEntity();
-        assertNotNull(sqlEntity, "Le SQL Entity ne doit pas être null");
-        assertEquals(BigInteger.valueOf(100), sqlEntity.getExtractionSQLId());
-        assertEquals("SELECT * FROM csv_table", sqlEntity.getExtractionSQLQuery());
-
-        // Vérifier Mail
-        SFCMExtractionMailEntity mailEntity = entity.getExtractionMailEntity();
-        assertNotNull(mailEntity, "Le mail entity ne doit pas être null");
-        assertEquals(BigInteger.valueOf(20), mailEntity.getExtractionMailId());
-        assertEquals("MailSubject for CSV", mailEntity.getMailSubject());
-        assertEquals("Body here", mailEntity.getMailBody());
-
-        // Sheets => null ou vide, selon votre code
-        assertTrue(
-            entity.getExtractionSheetEntitys() == null ||
-            entity.getExtractionSheetEntitys().isEmpty(),
-            "Puisqu’on n’a pas fourni de Sheets, ce set doit être null ou vide"
-        );
+        return json;
     }
 
-    /**
-     * Test de mapping d'un {@link JSonExtraction} partiel (pas de CSV, pas de mail, etc.)
-     * pour vérifier qu'on ne plante pas avec des champs null.
-     */
-    @Test
-    void testMapJSonExtractionToSFCMExtractionEntity_NullSubObjects() {
-        // 1) JSON partiel
-        JSonExtraction json = new JSonExtraction();
-        json.setExtractionId(BigInteger.valueOf(2));
-        json.setExtractionName("Partial JSON");
-        json.setExtractionType("csv"); 
-        // pas de CSV, pas de mail
+    // ---------------------------------------------------------------------------------
+    // SQL
+    // ---------------------------------------------------------------------------------
+    private JSonExtractionSQL mapSFCMExtractionSQLEntityToJSonExtractionSQL(SFCMExtractionSQLEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionSQL json = new JSonExtractionSQL();
+        json.setExtractionSQLId(entity.getExtractionSQLId());
+        json.setExtractionSQLQuery(entity.getExtractionSQLQuery());
 
-        // 2) Appel
-        SFCMExtractionEntity entity = mapper.mapJSonExtractionToSFCMExtractionEntity(json);
+        // Paramètres
+        if (entity.getExtractionSQLParameterEntity() != null && !entity.getExtractionSQLParameterEntity().isEmpty()) {
+            json.setJsonExtractionSQLParameters(
+                    mapSetOfSFCMExtractionSQLParameterEntityToSetOfJSonExtractionSQLParameter(entity.getExtractionSQLParameterEntity())
+            );
+        }
 
-        // 3) Vérifs
-        assertNotNull(entity);
-        assertEquals(BigInteger.valueOf(2), entity.getExtractionId());
-        assertEquals("Partial JSON", entity.getExtractionName());
-        assertEquals("csv", entity.getExtractionType());
+        return json;
+    }
 
-        // Sous-objets doivent être null
-        assertNull(entity.getExtractionCSVEntity());
-        assertNull(entity.getExtractionMailEntity());
-        assertNull(entity.getExtractionSheetEntitys());
+    private Set<JSonExtractionSQLParameter> mapSetOfSFCMExtractionSQLParameterEntityToSetOfJSonExtractionSQLParameter(
+            Set<SFCMExtractionSQLParameterEntity> entities
+    ) {
+        return entities.stream()
+                .map(this::mapSFCMExtractionSQLParameterEntityToJSonExtractionSQLParameter)
+                .collect(Collectors.toSet());
+    }
+
+    private JSonExtractionSQLParameter mapSFCMExtractionSQLParameterEntityToJSonExtractionSQLParameter(
+            SFCMExtractionSQLParameterEntity entity
+    ) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionSQLParameter json = new JSonExtractionSQLParameter();
+        json.setExtractionSQLParameterId(entity.getExtractionSQLParameterId());
+        json.setParametentype(entity.getParameterType());
+        json.setParameterNane(entity.getParameterName());
+        json.setParameterValue(entity.getParameterValue());
+        return json;
+    }
+
+    // ---------------------------------------------------------------------------------
+    // SHEET
+    // ---------------------------------------------------------------------------------
+    private Set<JSonExtractionSheet> mapSetOfSFCMExtractionSheetEntityToSetOfJSonExtractionSheet(
+            Set<SFCMExtractionSheetEntity> entities
+    ) {
+        return entities.stream()
+                .map(this::mapSFCMExtractionSheetEntityToJSonExtractionSheet)
+                .collect(Collectors.toSet());
+    }
+
+    private JSonExtractionSheet mapSFCMExtractionSheetEntityToJSonExtractionSheet(SFCMExtractionSheetEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionSheet json = new JSonExtractionSheet();
+        json.setExtractionSheetId(entity.getExtractionSheetId());
+        json.setSheetName(entity.getSheetName());
+        json.setSheetOrder(entity.getSheetOrder());
+
+        // SQL
+        if (entity.getExtractionSQLEntity() != null) {
+            json.setJsonExtractionSQL(mapSFCMExtractionSQLEntityToJSonExtractionSQL(entity.getExtractionSQLEntity()));
+        }
+
+        // Headers
+        if (entity.getExtractionSheetHeaderEntitys() != null && !entity.getExtractionSheetHeaderEntitys().isEmpty()) {
+            json.setJsonExtractionSheetHeader(
+                    mapSetOfSFCMExtractionSheetHeaderEntityToSetOfJSonExtractionSheetHeader(entity.getExtractionSheetHeaderEntitys())
+            );
+        }
+
+        // Fields
+        if (entity.getExtractionSheetFieldEntitys() != null && !entity.getExtractionSheetFieldEntitys().isEmpty()) {
+            json.setJsonExtractionSheetField(
+                    mapSetOfSFCMExtractionSheetFieldEntityToSetOfJSonExtractionSheetField(entity.getExtractionSheetFieldEntitys())
+            );
+        }
+
+        return json;
+    }
+
+    private Set<JSonExtractionSheetHeader> mapSetOfSFCMExtractionSheetHeaderEntityToSetOfJSonExtractionSheetHeader(
+            Set<SFCMExtractionSheetHeaderEntity> entities
+    ) {
+        return entities.stream()
+                .map(this::mapSFCMExtractionSheetHeaderEntityToJSonExtractionSheetHeader)
+                .collect(Collectors.toSet());
+    }
+
+    private JSonExtractionSheetHeader mapSFCMExtractionSheetHeaderEntityToJSonExtractionSheetHeader(
+            SFCMExtractionSheetHeaderEntity entity
+    ) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionSheetHeader json = new JSonExtractionSheetHeader();
+        json.setExtractionSheetHeaderId(entity.getExtractionSheetHeaderId());
+        json.setHeaderName(entity.getHeaderName());
+        json.setHeaderOrder(entity.getHeaderOrder());
+
+        // Cell Style
+        if (entity.getExtractionCellStyleEntity() != null) {
+            json.setJsonExtractionCellStyle(mapSFCMExtractionCellStyleEntityToJSonExtractionCellStyle(entity.getExtractionCellStyleEntity()));
+        }
+
+        return json;
+    }
+
+    private Set<JSonExtractionSheetField> mapSetOfSFCMExtractionSheetFieldEntityToSetOfJSonExtractionSheetField(
+            Set<SFCMExtractionSheetFieldEntity> entities
+    ) {
+        return entities.stream()
+                .map(this::mapSFCMExtractionSheetFieldEntityToJSonExtractionSheetField)
+                .collect(Collectors.toSet());
+    }
+
+    private JSonExtractionSheetField mapSFCMExtractionSheetFieldEntityToJSonExtractionSheetField(SFCMExtractionSheetFieldEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionSheetField json = new JSonExtractionSheetField();
+        json.setExtractionSheetFieldId(entity.getExtractionSheetFieldId());
+        json.setFieldName(entity.getFieldName());
+        json.setFieldFormat(entity.getFieldFormat());
+        json.setFieldOrder(entity.getFieldOrder());
+
+        // Cell Style
+        if (entity.getExtractionCellStyleEntity() != null) {
+            json.setJsonExtractionCellStyle(mapSFCMExtractionCellStyleEntityToJSonExtractionCellStyle(entity.getExtractionCellStyleEntity()));
+        }
+
+        return json;
+    }
+
+    // ---------------------------------------------------------------------------------
+    // CELL STYLE
+    // ---------------------------------------------------------------------------------
+    private JSonExtractionCellStyle mapSFCMExtractionCellStyleEntityToJSonExtractionCellStyle(SFCMExtractionCellStyleEntity entity) {
+        if (entity == null) {
+            return null;
+        }
+        JSonExtractionCellStyle json = new JSonExtractionCellStyle();
+        json.setExtractionCellStyleId(entity.getExtractionCellStyleId());
+        json.setCellStyle(entity.getCellStyle());
+        json.setCellFormat(entity.getCellFormat());
+        json.setBackgroundColor(entity.getBackgroundColor());
+        json.setForegroundColor(entity.getForegroundColor());
+        json.setHorizontalAlignment(entity.getHorizontalAlignment());
+        json.setVerticalAlignment(entity.getVerticalAlignment());
+        json.setBorderStyle(entity.getBorderStyle());
+        json.setFontName(entity.getFontName());
+        json.setFontColor(entity.getFontColor());
+        json.setFontHeight(entity.getFontHeight());
+        json.setFontTypographicEmphasis(entity.getFontTypographicEmphasis());
+        return json;
     }
 }
