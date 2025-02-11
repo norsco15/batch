@@ -1,48 +1,36 @@
-@Test
-void testMapJSonExtractionToSFCMExtractionEntity_withCellStyle() {
-// On construit un JSonExtractionSheet avec un header ayant un cell style
-JSonExtractionSheet sheet = new JSonExtractionSheet();
-sheet.setExtractionSheetId(BigInteger.valueOf(101));
+package com.example.extraction.entity;
 
-    JSonExtractionSheetHeader header = new JSonExtractionSheetHeader();
-    header.setExtractionSheetHeaderId(BigInteger.valueOf(201));
-    header.setHeaderName("Header1");
+import lombok.Data;
+import lombok.EqualsAndHashCode;
 
-    JSonExtractionCellStyle style = new JSonExtractionCellStyle();
-    style.setExtractionCellStyleId(BigInteger.valueOf(301));
-    style.setCellStyle("BOLD");
-    style.setBackgroundColor("GREEN");
-    header.setJsonExtractionCellStyle(style);
+import javax.persistence.*;
+import java.math.BigInteger;
 
-    Set<JSonExtractionSheetHeader> headers = new HashSet<>();
-    headers.add(header);
-    sheet.setJsonExtractionSheetHeader(headers);
+@Data
+@Entity
+@Table(name = "USR_EXTRACTION_CSV_FORMAT")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+public class SFCMExtractionCSVFormatEntity {
 
-    Set<JSonExtractionSheet> sheets = new HashSet<>();
-    sheets.add(sheet);
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "UsrExtractionCSVFormatSequence")
+    @SequenceGenerator(name = "UsrExtractionCSVFormatSequence", sequenceName = "USR_EXTRACTION_CSV_FORMAT_SEQ", allocationSize = 1)
+    @Column(name = "extraction_csv_format_id")
+    @EqualsAndHashCode.Include
+    private BigInteger extractionCSVFormatId;
 
-    JSonExtraction json = new JSonExtraction();
-    json.setExtractionType("xls");
-    json.setJsonExtractionSheet(sheets);
+    /**
+     * On stocke ici la liste des headers à exclure du formattage numérique, 
+     * par exemple "EVENT_ID;LOAN_ID".
+     */
+    @Column(name = "excluded_headers")
+    private String excludedHeaders;
 
-    // Appel du mapper
-    SFCMExtractionEntity entity = mapper.mapJSonExtractionToSFCMExtractionEntity(json);
-
-    // Vérif
-    assertNotNull(entity);
-    Set<SFCMExtractionSheetEntity> sheetEntities = entity.getExtractionSheetEntitys();
-    assertNotNull(sheetEntities);
-    assertEquals(1, sheetEntities.size());
-
-    SFCMExtractionSheetEntity sheetEntity = sheetEntities.iterator().next();
-    Set<SFCMExtractionSheetHeaderEntity> headerEntities = sheetEntity.getExtractionSheetHeaderEntitys();
-    assertNotNull(headerEntities);
-    assertEquals(1, headerEntities.size());
-
-    SFCMExtractionSheetHeaderEntity headerEntity = headerEntities.iterator().next();
-    SFCMExtractionCellStyleEntity styleEntity = headerEntity.getExtractionCellStyleEntity();
-    assertNotNull(styleEntity);
-    assertEquals(BigInteger.valueOf(301), styleEntity.getExtractionCellStyleId());
-    assertEquals("BOLD", styleEntity.getCellStyle());
-    assertEquals("GREEN", styleEntity.getBackgroundColor());
+    /**
+     * Relation OneToOne avec SFCMExtractionCSVEntity.
+     * Ce côté-ci détient la clé étrangère (extraction_csv_id).
+     */
+    @OneToOne
+    @JoinColumn(name = "extraction_csv_id") 
+    private SFCMExtractionCSVEntity extractionCSVEntity;
 }

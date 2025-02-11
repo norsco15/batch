@@ -1,53 +1,42 @@
-@Test
-void testMapSFCMExtractionEntityToJSonExtraction_withCellStyle() {
-// Entité
-SFCMExtractionEntity entity = new SFCMExtractionEntity();
-entity.setExtractionType("xls");
+@Data
+@Entity
+@Table(name = "USR_EXTRACTION_CSV")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+public class SFCMExtractionCSVEntity {
 
-    SFCMExtractionSheetEntity sheetEntity = new SFCMExtractionSheetEntity();
-    sheetEntity.setExtractionSheetId(BigInteger.valueOf(101));
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "UsrExtractionCSVSequence")
+    @SequenceGenerator(name = "UsrExtractionCSVSequence", sequenceName = "USR_EXTRACTION_CSV_SEQUENCE", allocationSize = 1)
+    @Column(name = "extraction_csv_id")
+    @EqualsAndHashCode.Include
+    private BigInteger extractionCSVId;
 
-    SFCMExtractionSheetHeaderEntity headerEntity = new SFCMExtractionSheetHeaderEntity();
-    headerEntity.setExtractionSheetHeaderId(BigInteger.valueOf(201));
-    headerEntity.setHeaderName("Header1");
+    @Column(name = "extraction_csv_separator")
+    private String extractionCSVSeparator;
 
-    // CellStyle
-    SFCMExtractionCellStyleEntity styleEntity = new SFCMExtractionCellStyleEntity();
-    styleEntity.setExtractionCellStyleId(BigInteger.valueOf(301));
-    styleEntity.setCellStyle("BOLD");
-    styleEntity.setBackgroundColor("GREEN");
+    @Column(name = "extraction_csv_header")
+    @Lob
+    private String extractionCSVHeader;
 
-    headerEntity.setExtractionCellStyleEntity(styleEntity);
-    styleEntity.setExtractionSheetHeaderEntity(headerEntity);
+    @Column(name = "extraction_date_format")
+    private String extractionDateFormat;
 
-    Set<SFCMExtractionSheetHeaderEntity> headers = new HashSet<>();
-    headers.add(headerEntity);
-    sheetEntity.setExtractionSheetHeaderEntitys(headers);
+    @Column(name = "extraction_number_format")
+    private String extractionNumberFormat;
 
-    Set<SFCMExtractionSheetEntity> sheets = new HashSet<>();
-    sheets.add(sheetEntity);
-    entity.setExtractionSheetEntitys(sheets);
+    @OneToOne(cascade = CascadeType.ALL)
+    @JoinColumn(name = "extraction_id")
+    private SFCMExtractionEntity extractionEntity;
 
-    // Appel du mapper
-    JSonExtraction json = mapper.mapSFCMExtractionEntityToJSonExtraction(entity);
+    @OneToOne(cascade = CascadeType.ALL)
+    @JoinColumn(name = "extraction_sql_id")
+    private SFCMExtractionSQLEntity extractionSQLEntity;
 
-    // Vérif
-    assertNotNull(json);
-    assertEquals("xls", json.getExtractionType());
-
-    Set<JSonExtractionSheet> jsonSheets = json.getJsonExtractionSheet();
-    assertNotNull(jsonSheets);
-    assertEquals(1, jsonSheets.size());
-
-    JSonExtractionSheet sheet = jsonSheets.iterator().next();
-    Set<JSonExtractionSheetHeader> jsonHeaders = sheet.getJsonExtractionSheetHeader();
-    assertNotNull(jsonHeaders);
-    assertEquals(1, jsonHeaders.size());
-
-    JSonExtractionSheetHeader header = jsonHeaders.iterator().next();
-    JSonExtractionCellStyle style = header.getJsonExtractionCellStyle();
-    assertNotNull(style);
-    assertEquals(BigInteger.valueOf(301), style.getExtractionCellStyleId());
-    assertEquals("BOLD", style.getCellStyle());
-    assertEquals("GREEN", style.getBackgroundColor());
+    /**
+     * Nouvelle relation OneToOne vers l'entité CSVFormat.
+     * Ici, le mappedBy n'est pas nécessaire si on garde la clé
+     * dans SFCMExtractionCSVFormatEntity. 
+     */
+    @OneToOne(mappedBy = "extractionCSVEntity", cascade = CascadeType.ALL)
+    private SFCMExtractionCSVFormatEntity extractionCSVFormatEntity;
 }
