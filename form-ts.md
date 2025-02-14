@@ -12,8 +12,9 @@ import { MatStepperModule } from '@angular/material/stepper';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatIconModule } from '@angular/material/icon';
 import { STEPPER_GLOBAL_OPTIONS } from '@angular/cdk/stepper';
+
 import { ExtractionService } from '../services/extraction.service';
-import { JSonExtraction, JSonExtractionCSV, JSonExtractionMail, JSonExtractionSheet } from '../models/extraction.model';
+import { JSonExtraction } from '../models/extraction.model';
 import { ExtractionFormSheetComponent } from './extraction-form-sheet.component';
 
 @Component({
@@ -33,7 +34,7 @@ import { ExtractionFormSheetComponent } from './extraction-form-sheet.component'
     MatStepperModule,
     MatTabsModule,
     MatIconModule,
-    ExtractionFormSheetComponent // on importe le composant "fils"
+    ExtractionFormSheetComponent
   ],
   providers: [
     {
@@ -52,10 +53,7 @@ export class ExtractionFormComponent implements OnInit {
     extractionName: '',
     extractionPath: '',
     extractionType: '',
-    extractionMail: '',
-    jsonExtractionMail: undefined,
-    jsonExtractionCSV: undefined,
-    jsonExtractionSheet: undefined
+    extractionMail: false
   };
 
   reportTypesList = [
@@ -68,43 +66,44 @@ export class ExtractionFormComponent implements OnInit {
     private service: ExtractionService
   ) { }
 
-  ngOnInit() {
+  ngOnInit(): void {
     if (this.router.url.includes('/update')) {
       this.formAction = 'MODIFY';
       const st: any = history.state;
       if (st && st.extractionId) {
-        // On suppose qu'on a déjà l'extraction, sinon on ferait un service.getExtractionById...
         this.extraction = st;
       }
     } else {
       this.formAction = 'CREATE';
-      // init par défaut
       this.extraction.extractionName = 'Change me !';
       this.extraction.extractionType = '';
     }
   }
 
   toggleMail() {
-    if (this.extraction.jsonExtractionMail) {
-      // on enlève le mail
-      this.extraction.jsonExtractionMail = undefined;
+    // extractionMail est un boolean
+    if (this.extraction.extractionMail === true) {
+      // on init la structure du mail
+      if (!this.extraction.jsonExtractionMail) {
+        this.extraction.jsonExtractionMail = {
+          extractionMailId: undefined,
+          mailSubject: '',
+          mailBody: '',
+          mailFrom: '',
+          mailTo: '',
+          mailCc: '',
+          attachFile: false,
+          zipFile: false
+        };
+      }
     } else {
-      // on init le mail
-      this.extraction.jsonExtractionMail = {
-        extractionMailId: undefined,
-        mailSubject: '',
-        mailBody: '',
-        mailFrom: '',
-        mailTo: '',
-        mailCc: '',
-        attachFile: '',
-        zipFile: ''
-      };
+      // on le met à false et on retire jsonExtractionMail
+      this.extraction.extractionMail = false;
+      this.extraction.jsonExtractionMail = undefined;
     }
   }
 
   onReportTypeChange() {
-    // si CSV => on init JSON CSV
     if (this.extraction.extractionType === 'CSV') {
       this.extraction.jsonExtractionCSV = {
         extractionCSVId: undefined,
@@ -115,13 +114,16 @@ export class ExtractionFormComponent implements OnInit {
         jsonExtractionSQL: {
           extractionSQLId: undefined,
           extractionSQLQuery: ''
+        },
+        jsonExtractionCSVFormat: {
+          extractionCSVFormatId: undefined,
+          excludedHeaders: '',
+          numberFormat: ''
         }
       };
       this.extraction.jsonExtractionSheet = undefined;
     } else if (this.extraction.extractionType === 'XLS') {
-      // XLS => on init la liste de sheets si pas déjà
       this.extraction.jsonExtractionSheet = [];
-      // on peut en ajouter 1 par défaut
       this.extraction.jsonExtractionSheet.push({
         extractionSheetId: undefined,
         sheetOrder: BigInt(0),
@@ -135,33 +137,9 @@ export class ExtractionFormComponent implements OnInit {
       });
       this.extraction.jsonExtractionCSV = undefined;
     } else {
-      // ni CSV ni XLS => reset
+      // Rien
       this.extraction.jsonExtractionCSV = undefined;
       this.extraction.jsonExtractionSheet = undefined;
-    }
-  }
-
-  save() {
-    if (this.formAction === 'MODIFY') {
-      this.service.updateExtraction(this.extraction).subscribe({
-        next: (res) => {
-          console.log('Extraction updated', res);
-          this.router.navigateByUrl('/admin/extraction/list');
-        },
-        error: (err) => {
-          console.error('Error updating', err);
-        }
-      });
-    } else {
-      this.service.createExtraction(this.extraction).subscribe({
-        next: (res) => {
-          console.log('Extraction created', res);
-          this.router.navigateByUrl('/admin/extraction/list');
-        },
-        error: (err) => {
-          console.error('Error creating', err);
-        }
-      });
     }
   }
 
@@ -181,5 +159,29 @@ export class ExtractionFormComponent implements OnInit {
       jsonExtractionSheetHeader: [],
       jsonExtractionSheetField: []
     });
+  }
+
+  save() {
+    if (this.formAction === 'MODIFY') {
+      this.service.updateExtraction(this.extraction).subscribe({
+        next: (res) => {
+          console.log('Extraction updated', res);
+          this.router.navigateByUrl('/extraction/list');
+        },
+        error: (err) => {
+          console.error('Error updating extraction', err);
+        }
+      });
+    } else {
+      this.service.createExtraction(this.extraction).subscribe({
+        next: (res) => {
+          console.log('Extraction created', res);
+          this.router.navigateByUrl('/extraction/list');
+        },
+        error: (err) => {
+          console.error('Error creating extraction', err);
+        }
+      });
+    }
   }
 }

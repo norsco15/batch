@@ -1,33 +1,26 @@
 <h2 mat-dialog-title>
-  {{ data.isHeader ? 'Edit Header Style' : 'Edit Field Style' }}
+  {{ data.isHeader ? 'Edit Header' : 'Edit Field' }}
 </h2>
 
 <mat-dialog-content>
-  <p *ngIf="data.isHeader">
-    Header Name:
-    <input matInput [(ngModel)]="data.header.headerName" />
-  </p>
-  <p *ngIf="!data.isHeader">
-    Field Name:
-    <input matInput [(ngModel)]="data.field.fieldName" />
-  </p>
-
-  <p>
-    Background Color:
+  <div *ngIf="data.isHeader">
     <mat-form-field>
-      <mat-select [value]="data.isHeader ? data.header.jsonExtractionCellStyle?.backgroundColor : data.field.jsonExtractionCellStyle?.backgroundColor">
-        <mat-option [value]="'WHITE'">White</mat-option>
-        <mat-option [value]="'RED'">Red</mat-option>
-        <mat-option [value]="'GREEN'">Green</mat-option>
-        <mat-option [value]="'BLUE'">Blue</mat-option>
-      </mat-select>
+      <mat-label>Header Name</mat-label>
+      <input matInput [(ngModel)]="data.header.headerName">
     </mat-form-field>
-  </p>
+    <!-- Ajouter la partie style: backgroundColor, alignement, etc. -->
+  </div>
 
-  <!-- etc. pour font, border, alignment, ... -->
+  <div *ngIf="!data.isHeader">
+    <mat-form-field>
+      <mat-label>Field Name</mat-label>
+      <input matInput [(ngModel)]="data.field.fieldName">
+    </mat-form-field>
+    <!-- Idem style etc. -->
+  </div>
 </mat-dialog-content>
 
 <mat-dialog-actions>
   <button mat-button (click)="onCancel()">Cancel</button>
-  <button mat-button color="primary" (click)="onSave()">Save</button>
+  <button mat-raised-button color="primary" (click)="onSave()">Save</button>
 </mat-dialog-actions>
