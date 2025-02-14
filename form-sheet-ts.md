@@ -6,7 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatDialogModule, MatDialog } from '@angular/material/dialog';
 
 import { JSonExtractionSheet, JSonExtractionSheetHeader, JSonExtractionSheetField } from '../models/extraction.model';
-// import { ExtractionColumnDialogComponent } from './extraction-column-dialog.component'; // si vous voulez ouvrir un dialog
+import { ExtractionColumnDialogComponent } from './extraction-column-dialog.component';
 
 @Component({
   selector: 'app-extraction-form-sheet',
@@ -22,26 +22,22 @@ import { JSonExtractionSheet, JSonExtractionSheetHeader, JSonExtractionSheetFiel
   styleUrls: ['./extraction-form-sheet.component.css']
 })
 export class ExtractionFormSheetComponent implements OnInit {
-
   @Input() sheet!: JSonExtractionSheet;
 
-  constructor(
-    private dialog: MatDialog
-  ) { }
+  constructor(private dialog: MatDialog) {}
 
-  ngOnInit(): void {
-  }
+  ngOnInit(): void {}
 
   addHeader() {
     if (!this.sheet.jsonExtractionSheetHeader) {
       this.sheet.jsonExtractionSheetHeader = [];
     }
-    const order = this.sheet.jsonExtractionSheetHeader.length;
+    const order = BigInt(this.sheet.jsonExtractionSheetHeader.length);
     this.sheet.jsonExtractionSheetHeader.push({
       extractionSheetHeaderId: undefined,
-      headerOrder: BigInt(order),
-      headerName: 'HEADER' + order,
-      jsonExtractionCellStyle: undefined
+      headerOrder: order,
+      headerName: 'HEADER ' + order,
+      jsonExtractionCellStyle: {}
     });
   }
 
@@ -49,26 +45,33 @@ export class ExtractionFormSheetComponent implements OnInit {
     if (!this.sheet.jsonExtractionSheetField) {
       this.sheet.jsonExtractionSheetField = [];
     }
-    const order = this.sheet.jsonExtractionSheetField.length;
+    const order = BigInt(this.sheet.jsonExtractionSheetField.length);
     this.sheet.jsonExtractionSheetField.push({
       extractionSheetFieldId: undefined,
-      fieldorder: BigInt(order),
-      fieldName: 'FIELD' + order,
+      fieldorder: order,
+      fieldName: 'FIELD ' + order,
       fieldFormat: '',
-      jsonExtractionCellStyle: undefined
+      jsonExtractionCellStyle: {}
     });
   }
 
   editHeader(h: JSonExtractionSheetHeader) {
-    // Ouvrir un dialog ou autre logic
-    // const dialogRef = this.dialog.open(ExtractionColumnDialogComponent, {
-    //   data: { isHeader: true, header: h },
-    // });
+    const dialogRef = this.dialog.open(ExtractionColumnDialogComponent, {
+      data: {
+        isHeader: true,
+        header: h
+      },
+      width: '800px'
+    });
   }
 
   editField(f: JSonExtractionSheetField) {
-    // const dialogRef = this.dialog.open(ExtractionColumnDialogComponent, {
-    //   data: { isHeader: false, field: f },
-    // });
+    const dialogRef = this.dialog.open(ExtractionColumnDialogComponent, {
+      data: {
+        isHeader: false,
+        field: f
+      },
+      width: '800px'
+    });
   }
 }

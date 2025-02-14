@@ -7,18 +7,14 @@
     <form [formGroup]="form" (ngSubmit)="onSubmit()">
       <mat-form-field class="mr-sm-2">
         <mat-label>Extraction ID</mat-label>
-        <input matInput formControlName="fieldExtractionId" disabled />
+        <input matInput formControlName="extractionId" disabled />
       </mat-form-field>
 
       <p>Do you really want to delete this extraction?</p>
 
-      <div style="display: flex; gap: 1rem;">
-        <button mat-raised-button color="primary" type="submit">
-          Yes
-        </button>
-        <button mat-stroked-button color="warn" [routerLink]="'/extraction/list'">
-          Cancel
-        </button>
+      <div style="display:flex; gap:1rem;">
+        <button mat-raised-button color="primary" type="submit">Yes</button>
+        <button mat-stroked-button color="warn" type="button" (click)="onCancel()">Cancel</button>
       </div>
 
       <p style="color:red;">{{ errorMessage }}</p>

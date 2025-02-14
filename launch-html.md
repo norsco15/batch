@@ -5,21 +5,40 @@
 
   <mat-card-content>
     <form [formGroup]="form" (ngSubmit)="onSubmit()">
-      <mat-form-field class="mr-sm-2">
+
+      <mat-form-field>
         <mat-label>Extraction ID</mat-label>
         <input matInput formControlName="extractionId" disabled />
       </mat-form-field>
 
-      <p>Do you want to launch this extraction?</p>
+      <p>Parameters (optional):</p>
+      <div formArrayName="params">
+        <div *ngFor="let paramGroup of paramsArray.controls; let i=index" [formGroupName]="i">
+          <mat-form-field>
+            <mat-label>Parameter Name</mat-label>
+            <input matInput formControlName="parameterName" />
+          </mat-form-field>
 
-      <div style="display: flex; gap: 1rem;">
-        <button mat-raised-button color="primary" type="submit">
-          Yes
-        </button>
-        <button mat-stroked-button color="warn" [routerLink]="'/extraction/list'">
-          Cancel
-        </button>
+          <mat-form-field>
+            <mat-label>Parameter Value</mat-label>
+            <input matInput formControlName="parameterValue" />
+          </mat-form-field>
+
+          <button mat-icon-button color="warn" (click)="removeParam(i)">
+            <mat-icon>delete</mat-icon>
+          </button>
+        </div>
       </div>
+
+      <button mat-raised-button color="accent" type="button" (click)="addParam()">
+        Add Parameter
+      </button>
+
+      <br /><br />
+
+      <p>Do you want to launch this extraction?</p>
+      <button mat-raised-button color="primary" type="submit">Yes</button>
+      <button mat-button color="warn" type="button" (click)="onCancel()">Cancel</button>
 
       <p style="color:red;">{{ errorMessage }}</p>
     </form>

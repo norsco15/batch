@@ -1,10 +1,12 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
+import { MatInputModule } from '@angular/material/input';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatButtonModule } from '@angular/material/button';
 
 @Component({
   selector: 'app-extraction-column-dialog',
@@ -12,30 +14,30 @@ import { MatSelectModule } from '@angular/material/select';
   imports: [
     CommonModule,
     FormsModule,
-    MatButtonModule,
     MatFormFieldModule,
-    MatSelectModule
+    MatSelectModule,
+    MatInputModule,
+    MatButtonToggleModule,
+    MatButtonModule
   ],
   templateUrl: './extraction-column-dialog.component.html',
   styleUrls: ['./extraction-column-dialog.component.css']
 })
-export class ExtractionColumnDialogComponent implements OnInit {
+export class ExtractionColumnDialogComponent {
+
+  // data = { isHeader: boolean, header?: {...}, field?: {...} }
+  // On suppose qu'on a .jsonExtractionCellStyle ?
 
   constructor(
     public dialogRef: MatDialogRef<ExtractionColumnDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: any
   ) {}
 
-  ngOnInit(): void {
-    // data = { isHeader: boolean, header?: JSonExtractionSheetHeader, field?: JSonExtractionSheetField }
-  }
-
   onCancel() {
     this.dialogRef.close();
   }
 
   onSave() {
-    // On renvoie data modifié
     this.dialogRef.close(this.data);
   }
 }
