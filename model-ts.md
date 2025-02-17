@@ -1,18 +1,14 @@
 /**
- * Représente l'ensemble des modèles JSON de votre backend
- * Adapté à Angular/TypeScript.
+ * Représente toutes les interfaces envoyées/reçues du backend.
+ * extractionMail = 'Y' ou 'N'
  */
-
 export interface JSonExtraction {
   extractionId?: number;
   extractionName?: string;
   extractionPath?: string;
   extractionType?: string;
-  /**
-   * extractionMail est désormais un booléen (true/false)
-   */
-  extractionMail?: boolean;
-  
+  extractionMail?: string; // 'Y' ou 'N'
+
   jsonExtractionMail?: JSonExtractionMail;
   jsonExtractionCSV?: JSonExtractionCSV;
   jsonExtractionSheet?: JSonExtractionSheet[];
@@ -25,10 +21,11 @@ export interface JSonExtractionMail {
   mailFrom?: string;
   mailTo?: string;
   mailCc?: string;
-  attachFile?: boolean | string; 
-  zipFile?: boolean | string;
+  attachFile?: boolean;
+  zipFile?: boolean;
 }
 
+/** CSV */
 export interface JSonExtractionCSV {
   extractionCSVId?: number;
   extpactionCSVSeparator?: string;
@@ -36,38 +33,9 @@ export interface JSonExtractionCSV {
   extractionDateFormat?: string;
   extractionNumberFormat?: string;
   jsonExtractionSQL?: JSonExtractionSQL;
-
-  /**
-   * Nouveau : CSV Format (excluded headers, number format)
-   */
-  jsonExtractionCSVFormat?: JSonExtractionCSVFormat;
 }
 
-/**
- * Nouvelle table "USR_EXTRACTION_CSV_FORMAT" => entité SFCMExtractionCSVFormatEntity
- */
-export interface JSonExtractionCSVFormat {
-  extractionCSVFormatId?: number;
-  excludedHeaders?: string;  // ex: "EVENT_ID;LOAN_ID"
-  numberFormat?: string;     // ex: "#,###.##"
-}
-
-export interface JSonExtractionSQL {
-  extractionSQLId?: number;
-  extractionSQLQuery?: string;
-  jsonExtractionSQLParameters?: JSonExtractionSQLParameter[];
-}
-
-export interface JSonExtractionSQLParameter {
-  extractionSQLParameterId?: number;
-  parametentype?: string;  
-  parameterName?: string;
-  parameterValue?: string;
-}
-
-/**
- * XLS structures
- */
+/** XLS : un ou plusieurs sheets */
 export interface JSonExtractionSheet {
   extractionSheetId?: number;
   sheetOrder?: number;
@@ -77,46 +45,44 @@ export interface JSonExtractionSheet {
   jsonExtractionSheetField?: JSonExtractionSheetField[];
 }
 
+/** 1 header XLS */
 export interface JSonExtractionSheetHeader {
   extractionSheetHeaderId?: number;
   headerOrder?: number;
   headerName?: string;
-  jsonExtractionCellStyle?: JSonExtractionCellStyle;
+  // On ignore cellStyle => on envoie toujours null
 }
 
+/** 1 field XLS */
 export interface JSonExtractionSheetField {
   extractionSheetFieldId?: number;
   fieldorder?: number;
   fieldName?: string;
   fieldFormat?: string;
-  jsonExtractionCellStyle?: JSonExtractionCellStyle;
+  // On ignore cellStyle => on envoie toujours null
 }
 
-export interface JSonExtractionCellStyle {
-  extractionCellStyleId?: number;
-  cellStyle?: string;
-  cellFormat?: string;
-  backgroundColor?: string;
-  foregroundColor?: string;
-  horizontalAlignment?: string;
-  verticalAlignment?: string;
-  borderStyle?: string;
-  fontName?: string;
-  fontColor?: string;
-  fontHeight?: number;
-  fontTypographicEmphasis?: string;
+/** Représente un bloc SQL + params */
+export interface JSonExtractionSQL {
+  extractionSQLId?: number;
+  extractionSQLQuery?: string;
+  jsonExtractionSQLParameters?: JSonExtractionSQLParameter[];
 }
 
-/**
- * Pour lancer une extraction avec des paramètres.
- */
-export interface JSonExtractionParameters {
+export interface JSonExtractionSQLParameter {
+  extractionSQLParameterId?: number;
+  parametentype?: string;
   parameterName?: string;
   parameterValue?: string;
 }
 
-/** Contient l'id + liste de paramètres */
+/** Paramètres pour le launch extraction */
 export interface JSonLaunchExtraction {
   extractionId: number;
   extractionParameters?: JSonExtractionParameters[];
+}
+
+export interface JSonExtractionParameters {
+  parameterName?: string;
+  parameterValue?: string;
 }

@@ -58,7 +58,7 @@ export class ExtractionDeleteFormComponent implements OnInit {
       },
       error: (err) => {
         this.errorMessage = err.message;
-        console.error('Error deleting extraction', err);
+        console.error('Delete error', err);
       }
     });
   }

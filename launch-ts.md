@@ -8,7 +8,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 
 import { ExtractionService } from '../services/extraction.service';
-import { JSonExtraction, JSonLaunchExtraction, JSonExtractionParameters } from '../models/extraction.model';
+import { JSonExtraction, JSonLaunchExtraction } from '../models/extraction.model';
 
 @Component({
   selector: 'app-extraction-launch-form',
@@ -65,14 +65,14 @@ export class ExtractionLaunchFormComponent implements OnInit {
   }
 
   onSubmit() {
-    if (!this.extraction?.extractionId) {
+    const idControl = this.form.get('extractionId');
+    if (!idControl?.value) {
       this.errorMessage = 'No extractionId found';
       return;
     }
-    const paramList: JSonExtractionParameters[] = this.paramsArray.value;
     const launchObj: JSonLaunchExtraction = {
-      extractionId: this.extraction.extractionId,
-      extractionParameters: paramList
+      extractionId: +idControl.value,
+      extractionParameters: this.paramsArray.value
     };
 
     this.service.launchExtraction(launchObj).subscribe({
@@ -81,7 +81,7 @@ export class ExtractionLaunchFormComponent implements OnInit {
       },
       error: (err) => {
         this.errorMessage = err.message;
-        console.error('Error launching extraction', err);
+        console.error('Launch error', err);
       }
     });
   }

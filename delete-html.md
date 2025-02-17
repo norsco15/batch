@@ -5,7 +5,7 @@
 
   <mat-card-content>
     <form [formGroup]="form" (ngSubmit)="onSubmit()">
-      <mat-form-field class="mr-sm-2">
+      <mat-form-field style="width:300px;">
         <mat-label>Extraction ID</mat-label>
         <input matInput formControlName="extractionId" disabled />
       </mat-form-field>
