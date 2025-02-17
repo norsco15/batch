@@ -21,6 +21,8 @@ import {
 @Component({
   selector: 'app-extraction-form',
   standalone: true,
+  templateUrl: './extraction-form.component.html',
+  styleUrls: ['./extraction-form.component.css'],
   imports: [
     CommonModule,
     FormsModule,
@@ -32,13 +34,12 @@ import {
     MatStepperModule,
     MatIconModule
   ],
-  templateUrl: './extraction-form.component.html',
-  styleUrls: ['./extraction-form.component.css'],
   schemas: [CUSTOM_ELEMENTS_SCHEMA]
 })
 export class ExtractionFormComponent implements OnInit {
 
   formAction: 'CREATE' | 'MODIFY' = 'CREATE';
+
   extraction: JSonExtraction = {
     extractionName: '',
     extractionType: '',
@@ -53,23 +54,55 @@ export class ExtractionFormComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
-    // Vérif si on est en mode update
+    // Détecter si on est en mode "update" via l'URL ou autre
     if (this.router.url.includes('/update')) {
       this.formAction = 'MODIFY';
       const st: any = history.state;
       if (st && (st.extractionId || st.extractionName)) {
+        // on suppose qu'on a passé l'objet extraction complet en state
         this.extraction = st;
       }
     } else {
       this.formAction = 'CREATE';
     }
-    // Si l'extractionMail n'est pas défini, on met 'N'
+    // mail = 'Y' ou 'N'
     if (!this.extraction.extractionMail) {
       this.extraction.extractionMail = 'N';
     }
   }
 
-  /** Checkbox "Send Mail?" => 'Y' / 'N' */
+  /** Step 1: Global => extraName, path, type => CSV/XLS */
+  onTypeChange() {
+    if (this.extraction.extractionType === 'CSV') {
+      // initialiser la structure CSV
+      if (!this.extraction.jsonExtractionCSV) {
+        this.extraction.jsonExtractionCSV = {
+          extpactionCSVSeparator: ';',
+          extractionCSVHeader: '',
+          extractionDateFormat: '',
+          extractionNumberFormat: '',
+          jsonExtractionSQL: {
+            extractionSQLQuery: '',
+            jsonExtractionSQLParameters: []
+          }
+        };
+      }
+      // pas de sheet
+      this.extraction.jsonExtractionSheet = undefined;
+    } else if (this.extraction.extractionType === 'XLS') {
+      // reset CSV
+      this.extraction.jsonExtractionCSV = undefined;
+      if (!this.extraction.jsonExtractionSheet) {
+        this.extraction.jsonExtractionSheet = [];
+      }
+    } else {
+      // ni CSV ni XLS
+      this.extraction.jsonExtractionCSV = undefined;
+      this.extraction.jsonExtractionSheet = undefined;
+    }
+  }
+
+  /** Step 1: Mail => 'Y' ou 'N' */
   toggleMail(checked: boolean) {
     this.extraction.extractionMail = checked ? 'Y' : 'N';
     if (this.extraction.extractionMail === 'Y') {
@@ -89,37 +122,16 @@ export class ExtractionFormComponent implements OnInit {
     }
   }
 
-  /** On change CSV / XLS */
-  onTypeChange() {
-    if (this.extraction.extractionType === 'CSV') {
-      if (!this.extraction.jsonExtractionCSV) {
-        this.extraction.jsonExtractionCSV = {
-          extpactionCSVSeparator: ';',
-          extractionCSVHeader: '',
-          extractionDateFormat: '',
-          extractionNumberFormat: '',
-          jsonExtractionSQL: {
-            extractionSQLQuery: '',
-            jsonExtractionSQLParameters: []
-          }
-        };
-      }
-      this.extraction.jsonExtractionSheet = undefined;
-    } else if (this.extraction.extractionType === 'XLS') {
-      this.extraction.jsonExtractionCSV = undefined;
-      if (!this.extraction.jsonExtractionSheet) {
-        this.extraction.jsonExtractionSheet = [];
-      }
-    } else {
-      // none
-      this.extraction.jsonExtractionCSV = undefined;
-      this.extraction.jsonExtractionSheet = undefined;
-    }
-  }
+  // =========== CSV Step ============
 
-  /** CSV: add param / remove param */
   addCSVParam() {
-    if (!this.extraction.jsonExtractionCSV?.jsonExtractionSQL) return;
+    if (!this.extraction.jsonExtractionCSV) return;
+    if (!this.extraction.jsonExtractionCSV.jsonExtractionSQL) {
+      this.extraction.jsonExtractionCSV.jsonExtractionSQL = {
+        extractionSQLQuery: '',
+        jsonExtractionSQLParameters: []
+      };
+    }
     if (!this.extraction.jsonExtractionCSV.jsonExtractionSQL.jsonExtractionSQLParameters) {
       this.extraction.jsonExtractionCSV.jsonExtractionSQL.jsonExtractionSQLParameters = [];
     }
@@ -129,12 +141,36 @@ export class ExtractionFormComponent implements OnInit {
       parameterValue: ''
     });
   }
+
   removeCSVParam(index: number) {
     if (!this.extraction.jsonExtractionCSV?.jsonExtractionSQL?.jsonExtractionSQLParameters) return;
     this.extraction.jsonExtractionCSV.jsonExtractionSQL.jsonExtractionSQLParameters.splice(index, 1);
   }
 
-  /** XLS: pour chaque sheet => add param => on le fera en template ou ici ? */
+  // =========== XLS Step ============
+
+  addSheet() {
+    if (!this.extraction.jsonExtractionSheet) {
+      this.extraction.jsonExtractionSheet = [];
+    }
+    const idx = this.extraction.jsonExtractionSheet.length;
+    this.extraction.jsonExtractionSheet.push({
+      sheetOrder: idx,
+      sheetName: 'Sheet' + idx,
+      jsonExtractionSQL: {
+        extractionSQLQuery: '',
+        jsonExtractionSQLParameters: []
+      },
+      jsonExtractionSheetHeader: [],
+      jsonExtractionSheetField: []
+    });
+  }
+
+  removeSheet(index: number) {
+    if (!this.extraction.jsonExtractionSheet) return;
+    this.extraction.jsonExtractionSheet.splice(index, 1);
+  }
+
   addXLSParam(sheetIndex: number) {
     if (!this.extraction.jsonExtractionSheet) return;
     const sheet = this.extraction.jsonExtractionSheet[sheetIndex];
@@ -153,6 +189,7 @@ export class ExtractionFormComponent implements OnInit {
       parameterValue: ''
     });
   }
+
   removeXLSParam(sheetIndex: number, paramIndex: number) {
     if (!this.extraction.jsonExtractionSheet) return;
     const sheet = this.extraction.jsonExtractionSheet[sheetIndex];
@@ -160,29 +197,6 @@ export class ExtractionFormComponent implements OnInit {
     sheet.jsonExtractionSQL.jsonExtractionSQLParameters.splice(paramIndex, 1);
   }
 
-  /** XLS: add sheet */
-  addSheet() {
-    if (!this.extraction.jsonExtractionSheet) {
-      this.extraction.jsonExtractionSheet = [];
-    }
-    const idx = this.extraction.jsonExtractionSheet.length;
-    this.extraction.jsonExtractionSheet.push({
-      sheetOrder: idx,
-      sheetName: 'Sheet' + idx,
-      jsonExtractionSQL: {
-        extractionSQLQuery: '',
-        jsonExtractionSQLParameters: []
-      },
-      jsonExtractionSheetHeader: [],
-      jsonExtractionSheetField: []
-    });
-  }
-  removeSheet(index: number) {
-    if (!this.extraction.jsonExtractionSheet) return;
-    this.extraction.jsonExtractionSheet.splice(index, 1);
-  }
-
-  /** XLS: add/remove header */
   addHeader(sheetIndex: number) {
     if (!this.extraction.jsonExtractionSheet) return;
     const sheet = this.extraction.jsonExtractionSheet[sheetIndex];
@@ -192,9 +206,11 @@ export class ExtractionFormComponent implements OnInit {
     const order = sheet.jsonExtractionSheetHeader.length;
     sheet.jsonExtractionSheetHeader.push({
       headerOrder: order,
-      headerName: 'Header' + order
+      headerName: 'Header' + order,
+      // cell style => null
     });
   }
+
   removeHeader(sheetIndex: number, headerIndex: number) {
     if (!this.extraction.jsonExtractionSheet) return;
     const sheet = this.extraction.jsonExtractionSheet[sheetIndex];
@@ -202,7 +218,6 @@ export class ExtractionFormComponent implements OnInit {
     sheet.jsonExtractionSheetHeader.splice(headerIndex, 1);
   }
 
-  /** XLS: add/remove field */
   addField(sheetIndex: number) {
     if (!this.extraction.jsonExtractionSheet) return;
     const sheet = this.extraction.jsonExtractionSheet[sheetIndex];
@@ -216,6 +231,7 @@ export class ExtractionFormComponent implements OnInit {
       fieldFormat: ''
     });
   }
+
   removeField(sheetIndex: number, fieldIndex: number) {
     if (!this.extraction.jsonExtractionSheet) return;
     const sheet = this.extraction.jsonExtractionSheet[sheetIndex];
@@ -223,7 +239,8 @@ export class ExtractionFormComponent implements OnInit {
     sheet.jsonExtractionSheetField.splice(fieldIndex, 1);
   }
 
-  /** Sauvegarde */
+  // =========== Save / Cancel ===========
+
   save() {
     if (this.formAction === 'CREATE') {
       this.service.createExtraction(this.extraction).subscribe({
