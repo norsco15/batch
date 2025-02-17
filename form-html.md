@@ -3,6 +3,7 @@
     <mat-card-title>
       {{ formAction === 'CREATE' ? 'Create Extraction' : 'Update Extraction' }}
     </mat-card-title>
+    <!-- Bouton Cancel à droite -->
     <button mat-stroked-button color="warn" style="margin-left:auto;" (click)="cancel()">
       Cancel
     </button>
@@ -11,43 +12,46 @@
   <mat-card-content>
     <!-- Stepper -->
     <mat-stepper orientation="horizontal">
+      
       <!-- STEP 1: GLOBAL -->
       <mat-step>
         <ng-template matStepLabel>Global Parameters</ng-template>
-        <!-- Report Name -->
+
+        <!-- extractionName -->
         <mat-form-field class="mr-sm-2">
-          <mat-label>Report Name</mat-label>
-          <input matInput [(ngModel)]="extraction.extractionName" name="reportName" required />
+          <mat-label>Extraction Name</mat-label>
+          <input matInput [(ngModel)]="extraction.extractionName" name="extractionName" required />
         </mat-form-field>
         <br />
 
-        <!-- File Path -->
+        <!-- extractionPath -->
         <mat-form-field class="mr-sm-2">
-          <mat-label>File Name</mat-label>
-          <input matInput [(ngModel)]="extraction.extractionPath" name="reportFileName" required />
+          <mat-label>File Path</mat-label>
+          <input matInput [(ngModel)]="extraction.extractionPath" name="extractionPath" />
         </mat-form-field>
         <br />
 
-        <!-- Report Type -->
-        <mat-form-field class="mr-sm-2">
-          <mat-label>Report Type</mat-label>
-          <mat-select [(ngModel)]="extraction.extractionType"
-                      name="reportType"
-                      (selectionChange)="onReportTypeChange()">
-            <mat-option *ngFor="let rt of reportTypesList" [value]="rt.value">
-              {{ rt.label }}
-            </mat-option>
-          </mat-select>
-        </mat-form-field>
-        <br />
-
-        <!-- Mail? -->
+        <!-- extractionMail => 'Y' ou 'N' -->
         <mat-checkbox
           [checked]="extraction.extractionMail === 'Y'"
           (change)="extraction.extractionMail = $event.checked ? 'Y' : 'N'; toggleMail()"
         >
           Send Mail?
         </mat-checkbox>
+        <br />
+
+        <!-- extractionType => CSV ou XLS -->
+        <mat-form-field class="mr-sm-2">
+          <mat-label>Extraction Type</mat-label>
+          <mat-select [(ngModel)]="extraction.extractionType"
+                      name="extractionType"
+                      (selectionChange)="onReportTypeChange()"
+                      required>
+            <mat-option *ngFor="let rt of reportTypesList" [value]="rt.value">
+              {{ rt.label }}
+            </mat-option>
+          </mat-select>
+        </mat-form-field>
 
         <div>
           <button mat-button matStepperNext>Next</button>
@@ -57,7 +61,6 @@
       <!-- STEP 2: MAIL (only if extractionMail = 'Y') -->
       <mat-step *ngIf="extraction.extractionMail === 'Y'">
         <ng-template matStepLabel>Mail Data</ng-template>
-        <input type="hidden" [(ngModel)]="extraction.jsonExtractionMail?.extractionMailId" />
 
         <mat-form-field class="mr-sm-2">
           <mat-label>From</mat-label>
@@ -78,7 +81,7 @@
         <br />
 
         <mat-form-field class="mr-sm-2">
-          <mat-label>To</mat-label>
+          <mat-label>Mail To</mat-label>
           <input matInput [(ngModel)]="extraction.jsonExtractionMail?.mailTo" name="mailTo" required />
         </mat-form-field>
         <br />
@@ -104,41 +107,55 @@
 
       <!-- STEP 3: CSV -->
       <mat-step *ngIf="extraction.extractionType === 'CSV'">
-        <ng-template matStepLabel>Csv Data</ng-template>
+        <ng-template matStepLabel>CSV Data</ng-template>
 
-        <!-- CSV Id hidden -->
-        <input type="hidden" [(ngModel)]="extraction.jsonExtractionCSV?.extractionCSVId" />
-
-        <mat-form-field class="mr-sm-2">
-          <mat-label>Headers</mat-label>
+        <!-- CSV basic fields -->
+        <mat-form-field>
+          <mat-label>CSV Header</mat-label>
           <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.extractionCSVHeader"
-                 name="csvHeader" required />
+                 name="csvHeader" />
         </mat-form-field>
         <br />
 
-        <mat-form-field class="mr-sm-2">
+        <mat-form-field>
           <mat-label>Separator</mat-label>
           <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.extpactionCSVSeparator"
-                 name="csvSeparator" required />
+                 name="csvSeparator" />
         </mat-form-field>
         <br />
 
-        <mat-form-field class="mr-sm-2">
+        <mat-form-field>
           <mat-label>Date Format</mat-label>
           <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.extractionDateFormat"
                  name="csvDateFormat" />
         </mat-form-field>
         <br />
 
-        <mat-form-field class="mr-sm-2">
+        <mat-form-field>
           <mat-label>Number Format</mat-label>
           <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.extractionNumberFormat"
                  name="csvNumberFormat" />
         </mat-form-field>
         <br />
 
+        <!-- CSV Format => excludedHeaders, numberFormat -->
+        <h4>CSV Format</h4>
+        <mat-form-field>
+          <mat-label>Excluded Headers</mat-label>
+          <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.jsonExtractionCSVFormat?.excludedHeaders"
+                 name="excludedHeaders" />
+        </mat-form-field>
+        <br />
+
+        <mat-form-field>
+          <mat-label>Excluded Number Format</mat-label>
+          <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.jsonExtractionCSVFormat?.numberFormat"
+                 name="excludedNumberFormat" />
+        </mat-form-field>
+        <br />
+
         <!-- SQL Query -->
-        <mat-form-field class="mr-sm-2" style="width:400px;">
+        <mat-form-field style="width:400px;">
           <mat-label>SQL Query</mat-label>
           <input matInput [(ngModel)]="extraction.jsonExtractionCSV?.jsonExtractionSQL?.extractionSQLQuery"
                  name="csvSqlQuery" />
@@ -146,7 +163,7 @@
         <br />
 
         <!-- SQL Params -->
-        <h4>SQL Params</h4>
+        <h5>SQL Params</h5>
         <button mat-raised-button color="accent" (click)="addCSVParam()">Add Param</button>
         <div *ngIf="extraction.jsonExtractionCSV?.jsonExtractionSQL?.jsonExtractionSQLParameters?.length">
           <div *ngFor="let param of extraction.jsonExtractionCSV?.jsonExtractionSQL?.jsonExtractionSQLParameters; let i=index"
@@ -177,17 +194,19 @@
 
       <!-- STEP 4: XLS -->
       <mat-step *ngIf="extraction.extractionType === 'XLS'">
-        <ng-template matStepLabel>Sheets Data</ng-template>
+        <ng-template matStepLabel>XLS Data</ng-template>
 
         <button mat-raised-button color="primary" (click)="addSheet()">Add Sheet</button>
+        <br /><br />
+
         <div *ngIf="extraction.jsonExtractionSheet?.length">
           <div *ngFor="let sheet of extraction.jsonExtractionSheet; let sIndex=index"
-               style="border:1px solid #ccc; margin:6px; padding:6px; position:relative;">
-            <button mat-icon-button color="warn" style="position:absolute; right:0; top:0;"
-                    (click)="removeSheet(sIndex)">
+               style="border:1px solid #ccc; margin:6px; padding:6px;">
+            <button mat-icon-button color="warn" style="float:right;" (click)="removeSheet(sIndex)">
               <mat-icon>delete</mat-icon>
             </button>
-            <mat-form-field class="mr-sm-2">
+
+            <mat-form-field>
               <mat-label>Sheet Name</mat-label>
               <input matInput [(ngModel)]="sheet.sheetName" name="sheetName{{sIndex}}" />
             </mat-form-field>
@@ -200,7 +219,6 @@
                      name="sheetSql{{sIndex}}" />
             </mat-form-field>
 
-            <!-- SQL Params XLS -->
             <h5>SQL Params</h5>
             <button mat-raised-button color="accent" (click)="addXLSParam(sIndex)">Add Param</button>
             <div *ngIf="sheet.jsonExtractionSQL?.jsonExtractionSQLParameters?.length">
@@ -224,7 +242,6 @@
               </div>
             </div>
 
-            <!-- HEADERS -->
             <h5>Headers</h5>
             <button mat-raised-button color="primary" (click)="addHeader(sIndex)">Add Header</button>
             <div *ngIf="sheet.jsonExtractionSheetHeader?.length">
@@ -241,7 +258,6 @@
               </div>
             </div>
 
-            <!-- FIELDS -->
             <h5>Fields</h5>
             <button mat-raised-button color="primary" (click)="addField(sIndex)">Add Field</button>
             <div *ngIf="sheet.jsonExtractionSheetField?.length">
@@ -256,6 +272,7 @@
                 </mat-form-field>
               </div>
             </div>
+
           </div>
         </div>
 
@@ -268,7 +285,9 @@
       <!-- STEP 5: SUMMARY -->
       <mat-step>
         <ng-template matStepLabel>Summary</ng-template>
-        <p>Report Name: {{extraction.extractionName}}</p>
+
+        <h3>Summary</h3>
+        <p>Name: {{extraction.extractionName}}</p>
         <p>Type: {{extraction.extractionType}}</p>
         <p>Mail? {{extraction.extractionMail === 'Y' ? 'Yes' : 'No'}}</p>
 
