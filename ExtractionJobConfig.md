@@ -3,10 +3,10 @@ package com.mycompany.extraction.batch.config;
 import com.mycompany.extraction.batch.tasklet.*;
 import org.springframework.context.annotation.*;
 import org.springframework.batch.core.*;
+import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.batch.core.repository.JobRepository;
 
 @Configuration
 public class ExtractionJobConfig {
@@ -29,7 +29,6 @@ public class ExtractionJobConfig {
         return new CallExtractionApiTasklet();
     }
 
-    // Steps
     @Bean
     public Step parseParametersStep(ParseParametersTasklet tasklet) {
         return new StepBuilder("parseParametersStep", jobRepository)
@@ -52,7 +51,7 @@ public class ExtractionJobConfig {
     }
 
     /**
-     * Le job => 3 steps
+     * Le job => 3 steps (Param -> Token -> API)
      */
     @Bean
     public Job extractionJob(Step parseParametersStep,
