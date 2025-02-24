@@ -1,80 +1,92 @@
 package com.mycompany.extraction.batch.config;
 
+import org.springframework.batch.core.*;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.support.DefaultBatchConfiguration;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.launch.support.SimpleJobLauncher;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.context.annotation.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.EnableTransactionManagement;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import com.mycompany.extraction.batch.tasklet.*;
 
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.core.launch.support.TaskExecutorJobLauncher;
-import org.springframework.core.task.SyncTaskExecutor;
-
-import org.springframework.batch.core.job.builder.JobParametersBuilder;
-import org.springframework.batch.core.JobParameters;
-
-import javax.sql.DataSource;
 import java.util.Properties;
 
 @Configuration
-@EnableTransactionManagement
-public class BatchInfraConfig {
+@EnableBatchProcessing
+public class BatchConfig extends DefaultBatchConfiguration {
 
     @Autowired
     private Environment env;
 
-    /**
-     * Créer un DataSource à partir de spring.datasource.*
-     */
+    // On override jobLauncher
     @Bean
-    public DataSource dataSource() {
-        DriverManagerDataSource ds = new DriverManagerDataSource();
-        ds.setUrl(env.getProperty("spring.datasource.url"));
-        ds.setUsername(env.getProperty("spring.datasource.username"));
-        ds.setPassword(env.getProperty("spring.datasource.password"));
-        ds.setDriverClassName(env.getProperty("spring.datasource.driver-class-name"));
-        return ds;
-    }
-
-    @Bean
-    public PlatformTransactionManager transactionManager(DataSource ds) {
-        return new DataSourceTransactionManager(ds);
-    }
-
-    /**
-     * JobRepository stocké en DB => 
-     * on utilise JobRepositoryFactoryBean + DataSource + TransactionManager.
-     */
-    @Bean
-    public JobRepository jobRepository(DataSource ds, PlatformTransactionManager tm) throws Exception {
-        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
-        factory.setDataSource(ds);
-        factory.setTransactionManager(tm);
-        // factory.setTablePrefix("BATCH_");
-        factory.afterPropertiesSet();
-        return factory.getObject();
-    }
-
-    /**
-     * TaskExecutorJobLauncher => Spring Batch 5
-     * On évite SimpleJobLauncher (deprecated).
-     */
-    @Bean
+    @Override
     public JobLauncher jobLauncher(JobRepository jobRepository) throws Exception {
-        TaskExecutorJobLauncher launcher = new TaskExecutorJobLauncher();
+        SimpleJobLauncher launcher = new SimpleJobLauncher();
         launcher.setJobRepository(jobRepository);
-        // Exec synchrone (un seul thread)
-        launcher.setTaskExecutor(new SyncTaskExecutor());
         launcher.afterPropertiesSet();
         return launcher;
     }
 
+    // Déclaration des tasklets
+    @Bean
+    public ParseParametersTasklet parseParametersTasklet() {
+        return new ParseParametersTasklet();
+    }
+
+    @Bean
+    public GetTokenTasklet getTokenTasklet() {
+        return new GetTokenTasklet();
+    }
+
+    @Bean
+    public CallExtractionApiTasklet callExtractionApiTasklet() {
+        return new CallExtractionApiTasklet();
+    }
+
+    // Steps
+    @Bean
+    public Step parseParametersStep(JobRepository jobRepository,
+                                   ParseParametersTasklet tasklet) {
+        return new StepBuilder("parseParametersStep", jobRepository)
+                .tasklet(tasklet)
+                .build();
+    }
+
+    @Bean
+    public Step getTokenStep(JobRepository jobRepository,
+                             GetTokenTasklet tasklet) {
+        return new StepBuilder("getTokenStep", jobRepository)
+                .tasklet(tasklet)
+                .build();
+    }
+
+    @Bean
+    public Step callApiStep(JobRepository jobRepository,
+                            CallExtractionApiTasklet tasklet) {
+        return new StepBuilder("callApiStep", jobRepository)
+                .tasklet(tasklet)
+                .build();
+    }
+
+    // Le job
+    @Bean
+    public Job extractionJob(JobRepository jobRepository,
+                             Step parseParametersStep,
+                             Step getTokenStep,
+                             Step callApiStep) {
+        return new JobBuilder("extractionJob", jobRepository)
+                .start(parseParametersStep)
+                .next(getTokenStep)
+                .next(callApiStep)
+                .build();
+    }
+
     /**
-     * Convertir arguments style --extractionId=123 => JobParameters
+     * Transforme des arguments du style --extractionId=123 en JobParameters
      */
     public static JobParameters createJobParameters(String[] args) {
         Properties props = new Properties();
