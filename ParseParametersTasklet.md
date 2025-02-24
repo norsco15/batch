@@ -1,46 +1,40 @@
-package com.mycompany.extraction.batch;
+package com.mycompany.extraction.batch.tasklet;
 
+import com.mycompany.extraction.batch.model.JSonExtractionParameters;
+import com.mycompany.extraction.batch.model.JSonLaunchExtraction;
 import org.springframework.batch.core.*;
-import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.repeat.RepeatStatus;
-import org.springframework.stereotype.Component;
 
-@Component
-@StepScope
+import java.math.BigInteger;
+import java.util.HashSet;
+import java.util.Set;
+
 public class ParseParametersTasklet implements Tasklet {
 
     @Override
-    public RepeatStatus execute(StepContribution contribution, ChunkContext chunkContext) throws Exception {
+    public RepeatStatus execute(StepContribution contribution,
+                                ChunkContext chunkContext) throws Exception {
         JobParameters jobParams = chunkContext.getStepContext()
                 .getStepExecution()
                 .getJobExecution()
                 .getJobParameters();
 
-        String extractionId = jobParams.getString("extractionId", "0");
-        String paramList = jobParams.getString("paramList", ""); // ex: "ENV=PREPROD;TYPE=FULL"
+        // ex: --extractionId=123, --paramList="ENV=PREPROD;TYPE=FULL"
+        String extractionIdStr = jobParams.getString("extractionId", "0");
+        String paramList = jobParams.getString("paramList", "");
 
-        ExecutionContext jobContext = chunkContext.getStepContext()
-                .getStepExecution()
-                .getJobExecution()
-                .getExecutionContext();
-
-        // 1) Convertir extractionId en BigInteger
-        BigInteger idBI = new BigInteger(extractionId);
-
-        // 2) Parser paramList => Set<JSonExtractionParameters>
-        Set<JSonExtractionParameters> paramSet = parseParamList(paramList);
-
-        // 3) Construire l’objet JSonLaunchExtraction
+        // On construit l'objet
         JSonLaunchExtraction launchObj = new JSonLaunchExtraction();
-        launchObj.setExtractionId(idBI);
-        launchObj.setExtractionParameters(paramSet);
+        launchObj.setExtractionId(new BigInteger(extractionIdStr));
+        launchObj.setExtractionParameters(parseParamList(paramList));
 
-        // 4) Stocker l’objet "launchObj" dans le jobContext
-        jobContext.put("launchExtraction", launchObj);
+        ExecutionContext ctx = chunkContext.getStepContext()
+                .getStepExecution().getJobExecution().getExecutionContext();
+        ctx.put("launchExtraction", launchObj);
 
-        System.out.println("Parsed extractionId=" + extractionId + " paramList=" + paramList);
-        System.out.println("launchObj=" + launchObj);
+        System.out.println("ParseParameters => extractionId=" + extractionIdStr 
+                + ", paramList=" + paramList);
 
         return RepeatStatus.FINISHED;
     }
@@ -50,7 +44,7 @@ public class ParseParametersTasklet implements Tasklet {
         if (paramList == null || paramList.trim().isEmpty()) {
             return set;
         }
-        // Suppose c’est "ENV=PREPROD;TYPE=FULL"
+        // Suppose "ENV=PREPROD;TYPE=FULL"
         String[] pairs = paramList.split(";");
         for (String pair : pairs) {
             String[] kv = pair.split("=", 2);
