@@ -1,96 +1,52 @@
 package com.mycompany.extraction.batch.config;
 
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.support.DefaultBatchConfiguration;
-import org.springframework.batch.core.job.builder.JobBuilder;
-import org.springframework.batch.core.launch.support.SimpleJobLauncher;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.context.annotation.*;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.env.Environment;
-import com.mycompany.extraction.batch.tasklet.*;
+import org.springframework.batch.core.repository.*;
+import org.springframework.batch.core.repository.support.MapJobRepositoryFactoryBean;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.launch.support.TaskExecutorJobLauncher;
+import org.springframework.core.task.SyncTaskExecutor;
+
+import org.springframework.batch.core.job.builder.JobParametersBuilder;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
 
 import java.util.Properties;
 
 @Configuration
 @EnableBatchProcessing
-public class BatchConfig extends DefaultBatchConfiguration {
+public class BatchConfig {
 
-    @Autowired
-    private Environment env;
-
-    // On override jobLauncher
+    /**
+     * Crée un JobRepository en mémoire (MapJobRepositoryFactoryBean).
+     * => plus besoin de DataSource
+     */
     @Bean
-    @Override
+    public JobRepository jobRepository() throws Exception {
+        MapJobRepositoryFactoryBean factory = new MapJobRepositoryFactoryBean();
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+
+    /**
+     * TaskExecutorJobLauncher (non déprécié), s'appuie sur le jobRepository en mémoire.
+     */
+    @Bean
     public JobLauncher jobLauncher(JobRepository jobRepository) throws Exception {
-        SimpleJobLauncher launcher = new SimpleJobLauncher();
+        TaskExecutorJobLauncher launcher = new TaskExecutorJobLauncher();
         launcher.setJobRepository(jobRepository);
+        // exécution synchrone (un seul thread)
+        launcher.setTaskExecutor(new SyncTaskExecutor());
         launcher.afterPropertiesSet();
         return launcher;
     }
 
-    // Déclaration des tasklets
-    @Bean
-    public ParseParametersTasklet parseParametersTasklet() {
-        return new ParseParametersTasklet();
-    }
-
-    @Bean
-    public GetTokenTasklet getTokenTasklet() {
-        return new GetTokenTasklet();
-    }
-
-    @Bean
-    public CallExtractionApiTasklet callExtractionApiTasklet() {
-        return new CallExtractionApiTasklet();
-    }
-
-    // Steps
-    @Bean
-    public Step parseParametersStep(JobRepository jobRepository,
-                                   ParseParametersTasklet tasklet) {
-        return new StepBuilder("parseParametersStep", jobRepository)
-                .tasklet(tasklet)
-                .build();
-    }
-
-    @Bean
-    public Step getTokenStep(JobRepository jobRepository,
-                             GetTokenTasklet tasklet) {
-        return new StepBuilder("getTokenStep", jobRepository)
-                .tasklet(tasklet)
-                .build();
-    }
-
-    @Bean
-    public Step callApiStep(JobRepository jobRepository,
-                            CallExtractionApiTasklet tasklet) {
-        return new StepBuilder("callApiStep", jobRepository)
-                .tasklet(tasklet)
-                .build();
-    }
-
-    // Le job
-    @Bean
-    public Job extractionJob(JobRepository jobRepository,
-                             Step parseParametersStep,
-                             Step getTokenStep,
-                             Step callApiStep) {
-        return new JobBuilder("extractionJob", jobRepository)
-                .start(parseParametersStep)
-                .next(getTokenStep)
-                .next(callApiStep)
-                .build();
-    }
-
     /**
-     * Transforme des arguments du style --extractionId=123 en JobParameters
+     * Convertir les arguments (ex: --extractionId=123) en JobParameters
      */
     public static JobParameters createJobParameters(String[] args) {
         Properties props = new Properties();
-        for (String arg: args) {
+        for (String arg : args) {
             if (arg.startsWith("--")) {
                 String[] kv = arg.substring(2).split("=", 2);
                 if (kv.length == 2) {
@@ -99,7 +55,7 @@ public class BatchConfig extends DefaultBatchConfiguration {
             }
         }
         JobParametersBuilder builder = new JobParametersBuilder();
-        for (String name: props.stringPropertyNames()) {
+        for (String name : props.stringPropertyNames()) {
             builder.addString(name, props.getProperty(name));
         }
         return builder.toJobParameters();
