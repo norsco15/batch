@@ -1,60 +1,59 @@
 package com.mycompany.extraction.batch.tasklet;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.*;
-import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.repeat.RepeatStatus;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.batch.test.MetaDataInstanceFactory;
 import org.springframework.http.*;
+import org.springframework.batch.core.scope.context.ChunkContext;
+import org.springframework.batch.repeat.RepeatStatus;
+import org.springframework.batch.item.ExecutionContext;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
 
-public class GetTokenTasklet implements Tasklet {
+public class GetTokenTaskletTest {
 
-    @Value("${keycloak.auth.url}")
-    private String keycloakAuthUrl;
+    @Test
+    void testExecuteOk() throws Exception {
+        // Mock RestTemplate
+        RestTemplate mockRest = mock(RestTemplate.class);
 
-    @Value("${keycloak.client.id}")
-    private String clientId;
+        GetTokenTasklet tasklet = new GetTokenTasklet();
+        // on injecte le mock
+        tasklet.setRestTemplate(mockRest);
+        // On définit les url, clientId, clientSecret si le code utilise
+        tasklet.setKeycloakAuthUrl("https://my-keycloak.com/auth/realms/myrealm/protocol/openid-connect/token");
+        tasklet.setClientId("myClientId");
+        tasklet.setClientSecret("mySecret");
 
-    @Value("${keycloak.client.secret}")
-    private String clientSecret;
+        // Suppose reponse 200 + body => { "access_token" : "abc123" }
+        Map<String,String> body = Map.of("access_token","abc123");
+        ResponseEntity<Map> response = new ResponseEntity<>(body, HttpStatus.OK);
+        when(mockRest.postForEntity(anyString(), any(), eq(Map.class)))
+            .thenReturn(response);
 
-    private RestTemplate restTemplate = new RestTemplate();
+        // StepExecution
+        JobParameters jobParams = new JobParametersBuilder().toJobParameters();
+        StepExecution stepExecution = MetaDataInstanceFactory.createStepExecution(jobParams);
+        StepContribution contribution = stepExecution.createStepContribution();
+        ChunkContext chunkContext = new ChunkContext(stepExecution);
 
-    @Override
-    public RepeatStatus execute(StepContribution contribution,
-                                ChunkContext chunkContext) throws Exception {
+        // WHEN
+        RepeatStatus status = tasklet.execute(contribution, chunkContext);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        // THEN
+        assertEquals(RepeatStatus.FINISHED, status);
+        ExecutionContext ctx = stepExecution.getJobExecution().getExecutionContext();
+        assertEquals("abc123", ctx.get("accessToken"));
+    }
 
-        String body = "grant_type=client_credentials"
-                + "&client_id=" + clientId
-                + "&client_secret=" + clientSecret;
-
-        HttpEntity<String> request = new HttpEntity<>(body, headers);
-
-        ResponseEntity<Map> resp = restTemplate.postForEntity(keycloakAuthUrl, request, Map.class);
-
-        if (resp.getStatusCode() == HttpStatus.OK && resp.getBody() != null) {
-            Map map = resp.getBody();
-            if (map.containsKey("access_token")) {
-                String token = map.get("access_token").toString();
-
-                ExecutionContext ctx = chunkContext.getStepContext()
-                        .getStepExecution().getJobExecution().getExecutionContext();
-                ctx.put("accessToken", token);
-
-                System.out.println("Keycloak token => " 
-                        + token.substring(0, Math.min(10, token.length())) + "...");
-            } else {
-                throw new RuntimeException("No access_token in response");
-            }
-        } else {
-            throw new RuntimeException("Keycloak request failed => " + resp.getStatusCode());
-        }
-
-        return RepeatStatus.FINISHED;
+    @Test
+    void testExecuteUnauthorized() throws Exception {
+        // ...
+        // On simule un 401 => HttpClientErrorException
+        // On verifie qu'on catch la runtimeException ou qu'on fail
     }
 }

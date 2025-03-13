@@ -1,60 +1,77 @@
 package com.mycompany.extraction.batch.tasklet;
 
-import com.mycompany.extraction.batch.model.JSonExtractionParameters;
-import com.mycompany.extraction.batch.model.JSonLaunchExtraction;
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.step.tasklet.Tasklet;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+
+import org.springframework.batch.core.StepContribution;
+import org.springframework.batch.core.scope.context.ChunkContext;
+import org.springframework.batch.test.MetaDataInstanceFactory;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.item.ExecutionContext;
 import org.springframework.batch.repeat.RepeatStatus;
 
-import java.math.BigInteger;
-import java.util.HashSet;
-import java.util.Set;
+public class ParseParametersTaskletTest {
 
-public class ParseParametersTasklet implements Tasklet {
+    @Test
+    void testExecuteWithExtractionId() throws Exception {
+        // GIVEN
+        ParseParametersTasklet tasklet = new ParseParametersTasklet();
 
-    @Override
-    public RepeatStatus execute(StepContribution contribution,
-                                ChunkContext chunkContext) throws Exception {
-        JobParameters jobParams = chunkContext.getStepContext()
-                .getStepExecution()
-                .getJobExecution()
-                .getJobParameters();
+        // Simuler un jobParameters : --extractionId=123
+        var jobParams = new JobParametersBuilder()
+            .addString("extractionId", "123")
+            .toJobParameters();
 
-        // ex: --extractionId=123, --paramList="ENV=PREPROD;TYPE=FULL"
-        String extractionIdStr = jobParams.getString("extractionId", "0");
-        String paramList = jobParams.getString("paramList", "");
+        // StepExecution factice
+        var stepExecution = MetaDataInstanceFactory.createStepExecution(jobParams);
+        StepContribution contribution = stepExecution.createStepContribution();
+        ChunkContext chunkContext = new ChunkContext(stepExecution);
 
-        // On construit l'objet
-        JSonLaunchExtraction launchObj = new JSonLaunchExtraction();
-        launchObj.setExtractionId(new BigInteger(extractionIdStr));
-        launchObj.setExtractionParameters(parseParamList(paramList));
+        // WHEN
+        RepeatStatus status = tasklet.execute(contribution, chunkContext);
 
-        ExecutionContext ctx = chunkContext.getStepContext()
-                .getStepExecution().getJobExecution().getExecutionContext();
-        ctx.put("launchExtraction", launchObj);
+        // THEN
+        assertEquals(RepeatStatus.FINISHED, status);
 
-        System.out.println("ParseParameters => extractionId=" + extractionIdStr 
-                + ", paramList=" + paramList);
-
-        return RepeatStatus.FINISHED;
+        ExecutionContext ctx = stepExecution.getJobExecution().getExecutionContext();
+        assertNotNull(ctx.get("extractionId"));
+        assertEquals("123", ctx.get("extractionId").toString());
+        // On vérifie que l'ID a bien été stocké
     }
 
-    private Set<JSonExtractionParameters> parseParamList(String paramList) {
-        Set<JSonExtractionParameters> set = new HashSet<>();
-        if (paramList == null || paramList.trim().isEmpty()) {
-            return set;
-        }
-        // Suppose "ENV=PREPROD;TYPE=FULL"
-        String[] pairs = paramList.split(";");
-        for (String pair : pairs) {
-            String[] kv = pair.split("=", 2);
-            if (kv.length == 2) {
-                JSonExtractionParameters p = new JSonExtractionParameters();
-                p.setParameterName(kv[0]);
-                p.setParameterValue(kv[1]);
-                set.add(p);
-            }
-        }
-        return set;
+    @Test
+    void testExecuteWithExtractionName() throws Exception {
+        ParseParametersTasklet tasklet = new ParseParametersTasklet();
+
+        var jobParams = new JobParametersBuilder()
+            .addString("extractionName", "MY_EXTRACT")
+            .toJobParameters();
+
+        var stepExecution = MetaDataInstanceFactory.createStepExecution(jobParams);
+        StepContribution contribution = stepExecution.createStepContribution();
+        ChunkContext chunkContext = new ChunkContext(stepExecution);
+
+        RepeatStatus status = tasklet.execute(contribution, chunkContext);
+        assertEquals(RepeatStatus.FINISHED, status);
+
+        ExecutionContext ctx = stepExecution.getJobExecution().getExecutionContext();
+        assertEquals("MY_EXTRACT", ctx.get("extractionName"));
+    }
+
+    @Test
+    void testExecuteNoIdNoName() throws Exception {
+        ParseParametersTasklet tasklet = new ParseParametersTasklet();
+
+        // pas d'ID ni de Name
+        var jobParams = new JobParametersBuilder().toJobParameters();
+
+        var stepExecution = MetaDataInstanceFactory.createStepExecution(jobParams);
+        StepContribution contribution = stepExecution.createStepContribution();
+        ChunkContext chunkContext = new ChunkContext(stepExecution);
+
+        // On s'attend à une exception => "No extractionId nor extractionName provided!"
+        assertThrows(RuntimeException.class, () -> {
+            tasklet.execute(contribution, chunkContext);
+        });
     }
 }

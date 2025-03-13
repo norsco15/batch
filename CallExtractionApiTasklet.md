@@ -1,58 +1,33 @@
-package com.mycompany.extraction.batch.tasklet;
+public class CallExtractionApiTaskletTest {
 
-import com.mycompany.extraction.batch.model.JSonLaunchExtraction;
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.repeat.RepeatStatus;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
-import org.springframework.web.client.RestTemplate;
+    @Test
+    void testExecuteOk() throws Exception {
+        RestTemplate mockRest = mock(RestTemplate.class);
 
-public class CallExtractionApiTasklet implements Tasklet {
+        CallExtractionApiTasklet tasklet = new CallExtractionApiTasklet();
+        tasklet.setRestTemplate(mockRest);
+        tasklet.setExtractionApiUrl("http://localhost:8080/api/extraction/launch");
 
-    @Value("${extraction.api.url}")
-    private String extractionApiUrl;
+        // stepExecution => context with extractionId=123, accessToken=abc
+        JobParameters params = new JobParametersBuilder().toJobParameters();
+        StepExecution stepExecution = MetaDataInstanceFactory.createStepExecution(params);
+        ExecutionContext ctx = stepExecution.getJobExecution().getExecutionContext();
+        ctx.put("extractionId", new BigInteger("123"));
+        ctx.put("accessToken", "abc");
 
-    private RestTemplate restTemplate = new RestTemplate();
+        StepContribution contribution = stepExecution.createStepContribution();
+        ChunkContext chunkContext = new ChunkContext(stepExecution);
 
-    @Override
-    public RepeatStatus execute(StepContribution contribution,
-                                ChunkContext chunkContext) throws Exception {
+        // Suppose reponse 200 OK
+        ResponseEntity<String> response = new ResponseEntity<>("OK", HttpStatus.OK);
+        when(mockRest.exchange(anyString(), eq(HttpMethod.POST), any(), eq(String.class)))
+            .thenReturn(response);
 
-        ExecutionContext ctx = chunkContext.getStepContext()
-                .getStepExecution().getJobExecution().getExecutionContext();
+        // WHEN
+        RepeatStatus status = tasklet.execute(contribution, chunkContext);
 
-        String token = (String) ctx.get("accessToken");
-        if (token == null) {
-            throw new RuntimeException("No token found in context!");
-        }
-
-        JSonLaunchExtraction launchObj = 
-            (JSonLaunchExtraction) ctx.get("launchExtraction");
-        if (launchObj == null) {
-            throw new RuntimeException("No launchExtraction object found!");
-        }
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token);
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        HttpEntity<JSonLaunchExtraction> request = new HttpEntity<>(launchObj, headers);
-
-        // POST /api/extraction/launch
-        ResponseEntity<String> resp = restTemplate.exchange(
-                extractionApiUrl,
-                HttpMethod.POST,
-                request,
-                String.class
-        );
-
-        if (resp.getStatusCode().is2xxSuccessful()) {
-            System.out.println("Extraction launch success => " + resp.getBody());
-        } else {
-            throw new RuntimeException("Extraction launch failed => " + resp.getStatusCode());
-        }
-
-        return RepeatStatus.FINISHED;
+        // THEN
+        assertEquals(RepeatStatus.FINISHED, status);
+        verify(mockRest).exchange(anyString(), eq(HttpMethod.POST), any(), eq(String.class));
     }
 }
