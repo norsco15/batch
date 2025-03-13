@@ -1,12 +1,17 @@
 package com.mycompany.extraction.batch.config;
 
-import com.mycompany.extraction.batch.tasklet.*;
-import org.springframework.context.annotation.*;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.beans.factory.annotation.Autowired;
+
 import org.springframework.batch.core.*;
 import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.batch.core.job.builder.JobBuilder;
+
+import com.mycompany.extraction.batch.tasklet.*;
 
 @Configuration
 public class ExtractionJobConfig {
@@ -14,53 +19,53 @@ public class ExtractionJobConfig {
     @Autowired
     private JobRepository jobRepository;
 
-    @Bean
-    public ParseParametersTasklet parseParametersTasklet() {
-        return new ParseParametersTasklet();
-    }
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private ParseParametersTasklet parseParametersTasklet;
+    @Autowired
+    private FindExtractionIdByNameTasklet findExtractionIdByNameTasklet;
+    @Autowired
+    private GetTokenTasklet getTokenTasklet;
+    @Autowired
+    private CallExtractionApiTasklet callExtractionApiTasklet;
 
     @Bean
-    public GetTokenTasklet getTokenTasklet() {
-        return new GetTokenTasklet();
-    }
-
-    @Bean
-    public CallExtractionApiTasklet callExtractionApiTasklet() {
-        return new CallExtractionApiTasklet();
-    }
-
-    @Bean
-    public Step parseParametersStep(ParseParametersTasklet tasklet) {
+    public Step parseStep() {
         return new StepBuilder("parseParametersStep", jobRepository)
-                .tasklet(tasklet)
+                .tasklet(parseParametersTasklet, transactionManager) // + transactionManager
                 .build();
     }
 
     @Bean
-    public Step getTokenStep(GetTokenTasklet tasklet) {
+    public Step findStep() {
+        return new StepBuilder("findExtractionIdByNameStep", jobRepository)
+                .tasklet(findExtractionIdByNameTasklet, transactionManager) // + transactionManager
+                .build();
+    }
+
+    @Bean
+    public Step tokenStep() {
         return new StepBuilder("getTokenStep", jobRepository)
-                .tasklet(tasklet)
+                .tasklet(getTokenTasklet, transactionManager) // + transactionManager
                 .build();
     }
 
     @Bean
-    public Step callApiStep(CallExtractionApiTasklet tasklet) {
-        return new StepBuilder("callApiStep", jobRepository)
-                .tasklet(tasklet)
+    public Step callStep() {
+        return new StepBuilder("callExtractionApiStep", jobRepository)
+                .tasklet(callExtractionApiTasklet, transactionManager) // + transactionManager
                 .build();
     }
 
-    /**
-     * Le job => 3 steps (Param -> Token -> API)
-     */
     @Bean
-    public Job extractionJob(Step parseParametersStep,
-                             Step getTokenStep,
-                             Step callApiStep) {
+    public Job extractionJob(Step parseStep, Step findStep, Step tokenStep, Step callStep) {
         return new JobBuilder("extractionJob", jobRepository)
-                .start(parseParametersStep)
-                .next(getTokenStep)
-                .next(callApiStep)
+                .start(parseStep)
+                .next(findStep)
+                .next(tokenStep)
+                .next(callStep)
                 .build();
     }
 }
