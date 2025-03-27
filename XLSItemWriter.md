@@ -1,69 +1,50 @@
-Step emailStep = new StepBuilder("emailStep", jobRepository)
-    .tasklet(emailTasklet(entity), transactionManager)
-    .build();
+package com.mycompany.batch.tasklet;
 
+import com.mycompany.entity.SFCMExtractionEntity;
+import com.mycompany.s3.S3BucketClient;
+import org.springframework.batch.core.StepContribution;
+import org.springframework.batch.core.scope.context.ChunkContext;
+import org.springframework.batch.core.step.tasklet.Tasklet;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.batch.repeat.RepeatStatus;
+import javax.mail.internet.MimeMessage;
+// autres imports
 
-Job job = new JobBuilder("myJob", jobRepository)
-    .start(csvOrXlsStep) // chunk step qui écrit sur S3
-    .next(emailStep)
-    .build();
+public class EmailTasklet implements Tasklet {
 
+    private final SFCMExtractionEntity entity;
+    private final S3BucketClient s3Client;
+    private final JavaMailSender mailSender;
 
-private Tasklet emailTasklet(SFCMExtractionEntity entity) {
-    return (StepContribution contribution, ChunkContext chunkContext) -> {
-        // 1) Vérifier si on doit envoyer un mail
+    public EmailTasklet(SFCMExtractionEntity entity,
+                        S3BucketClient s3Client,
+                        JavaMailSender mailSender) {
+        this.entity = entity;
+        this.s3Client = s3Client;
+        this.mailSender = mailSender;
+    }
+
+    @Override
+    public RepeatStatus execute(StepContribution contrib, ChunkContext chunkCtx) throws Exception {
         if (!"Y".equalsIgnoreCase(entity.getExtractionMail())) {
             return RepeatStatus.FINISHED;
         }
-
-        // 2) Construire le mail
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true); // multipart = true
-        // Récupérer destinataires
-        String[] recipients = null;
-        if (entity.getExtractionMailEntity() != null) {
-            String mailTo = entity.getExtractionMailEntity().getMailTo();
-            if (mailTo != null) {
-                recipients = mailTo.split(";");
-                helper.setTo(recipients);
-            }
-            helper.setSubject(entity.getExtractionMailEntity().getMailSubject());
-            helper.setText(entity.getExtractionMailEntity().getMailBody());
-        }
-
-        // 3) Déterminer le nom de fichier S3 + content-type (csv ou xls)
-        String extractionType = entity.getExtractionType();
-        // ex: on fabrique un objectKey différent
-        String objectKey;
-        String attachName;
-        if ("csv".equalsIgnoreCase(extractionType)) {
-            // ex: 
-            objectKey = "output/" + entity.getExtractionCSVEntity().getExtractionCSVFileName();
-            attachName = entity.getExtractionName() + ".csv";
-        } else if ("xls".equalsIgnoreCase(extractionType)) {
-            // ex:
-            objectKey = "extractions/" + entity.getExtractionName() + ".xlsx";
-            attachName = entity.getExtractionName() + ".xlsx";
-        } else {
-            // type inconnu => on skip
-            return RepeatStatus.FINISHED;
-        }
-
-        // 4) Télécharger l’objet depuis S3 + attacher
-        try {
-            S3Object s3Obj = s3Client.getS3().getObject(s3Client.getS3BucketName(), objectKey);
-            // Pièce jointe 
-            helper.addAttachment(
-                attachName, 
-                new InputStreamResource(s3Obj.getObjectContent())
-            );
-        } catch (Exception e) {
-            log.warn("Unable to get S3 object => {}", e.getMessage());
-        }
-
-        // 5) Envoyer l’email
-        mailSender.send(message);
-
+        // ... code pour construire le MimeMessage, 
+        //    télécharger object S3 (CSV ou XLS) et l'attacher,
+        //    mailSender.send(...)
         return RepeatStatus.FINISHED;
-    };
+    }
+}
+
+
+@Bean
+public Step emailStep(JobRepository jobRepo,
+                      PlatformTransactionManager txMgr,
+                      SFCMExtractionEntity entity,
+                      S3BucketClient s3Client,
+                      JavaMailSender mailSender) {
+    Tasklet tasklet = new EmailTasklet(entity, s3Client, mailSender);
+    return new StepBuilder("emailStep", jobRepo)
+        .tasklet(tasklet, txMgr)
+        .build();
 }
