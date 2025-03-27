@@ -1,86 +1,69 @@
-package com.mycompany.extraction.writer;
+Step emailStep = new StepBuilder("emailStep", jobRepository)
+    .tasklet(emailTasklet(entity), transactionManager)
+    .build();
 
-import org.springframework.batch.item.Chunk;
-import org.springframework.batch.item.ExecutionContext;
-import org.springframework.batch.item.support.AbstractItemStreamItemWriter;
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
-import com.mycompany.extraction.entity.SFCMExtractionSheetEntity;
+Job job = new JobBuilder("myJob", jobRepository)
+    .start(csvOrXlsStep) // chunk step qui écrit sur S3
+    .next(emailStep)
+    .build();
 
-import lombok.extern.slf4j.Slf4j;
 
-import java.util.Map;
-
-/**
- * Un writer qui écrit dans une sheet d'un Workbook POI,
- * sans utiliser de fichier local. On n'appelle pas workbook.write(...) ici.
- * -> On fait le flush final dans un autre step (UploadXlsToS3Tasklet).
- */
-@Slf4j
-public class XlsItemWriter extends AbstractItemStreamItemWriter<Map<String, Object>> {
-
-    private final Workbook workbook;
-    private final SFCMExtractionSheetEntity sheetEntity;
-
-    public XlsItemWriter(Workbook workbook, SFCMExtractionSheetEntity sheetEntity) {
-        this.workbook = workbook;
-        this.sheetEntity = sheetEntity;
-        setExecutionContextName(this.getClass().getSimpleName());
-    }
-
-    @Override
-    public void open(ExecutionContext executionContext) {
-        super.open(executionContext);
-        // rien à faire, on ne crée pas de fichier local
-        log.info("[XlsItemWriter] open => sheetName={}", sheetEntity.getSheetName());
-    }
-
-    @Override
-    public void write(Chunk<? extends Map<String, Object>> chunk) {
-        // On obtient ou crée la sheet
-        Sheet sheet = workbook.getSheet(sheetEntity.getSheetName());
-        if (sheet == null) {
-            sheet = workbook.createSheet(sheetEntity.getSheetName());
-            createHeaderRow(sheet);
+private Tasklet emailTasklet(SFCMExtractionEntity entity) {
+    return (StepContribution contribution, ChunkContext chunkContext) -> {
+        // 1) Vérifier si on doit envoyer un mail
+        if (!"Y".equalsIgnoreCase(entity.getExtractionMail())) {
+            return RepeatStatus.FINISHED;
         }
 
-        int rowIndex = sheet.getLastRowNum() + 1;
-        for (Map<String, Object> rowData : chunk) {
-            Row row = sheet.createRow(rowIndex++);
-            writeRow(row, rowData);
+        // 2) Construire le mail
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true); // multipart = true
+        // Récupérer destinataires
+        String[] recipients = null;
+        if (entity.getExtractionMailEntity() != null) {
+            String mailTo = entity.getExtractionMailEntity().getMailTo();
+            if (mailTo != null) {
+                recipients = mailTo.split(";");
+                helper.setTo(recipients);
+            }
+            helper.setSubject(entity.getExtractionMailEntity().getMailSubject());
+            helper.setText(entity.getExtractionMailEntity().getMailBody());
         }
-    }
 
-    private void createHeaderRow(Sheet sheet) {
-        Row headerRow = sheet.createRow(0);
-        // Ex. on parcourt SFCMExtractionSheetHeaderEntity
-        if (sheetEntity.getExtractionSheetHeaderEntitys() != null) {
-            sheetEntity.getExtractionSheetHeaderEntitys().forEach(header -> {
-                int colIndex = header.getHeaderOrder().intValue();
-                Cell cell = headerRow.createCell(colIndex);
-                cell.setCellValue(header.getHeaderName());
-            });
+        // 3) Déterminer le nom de fichier S3 + content-type (csv ou xls)
+        String extractionType = entity.getExtractionType();
+        // ex: on fabrique un objectKey différent
+        String objectKey;
+        String attachName;
+        if ("csv".equalsIgnoreCase(extractionType)) {
+            // ex: 
+            objectKey = "output/" + entity.getExtractionCSVEntity().getExtractionCSVFileName();
+            attachName = entity.getExtractionName() + ".csv";
+        } else if ("xls".equalsIgnoreCase(extractionType)) {
+            // ex:
+            objectKey = "extractions/" + entity.getExtractionName() + ".xlsx";
+            attachName = entity.getExtractionName() + ".xlsx";
+        } else {
+            // type inconnu => on skip
+            return RepeatStatus.FINISHED;
         }
-    }
 
-    private void writeRow(Row row, Map<String, Object> rowData) {
-        // On parcourt SFCMExtractionSheetFieldEntity pour connaître l'ordre des colonnes
-        if (sheetEntity.getExtractionSheetFieldEntitys() != null) {
-            sheetEntity.getExtractionSheetFieldEntitys().forEach(field -> {
-                int colIndex = field.getFieldOrder().intValue();
-                Cell cell = row.createCell(colIndex);
-                Object value = rowData.get(field.getFieldName().toUpperCase());
-                cell.setCellValue(value != null ? value.toString() : "");
-            });
+        // 4) Télécharger l’objet depuis S3 + attacher
+        try {
+            S3Object s3Obj = s3Client.getS3().getObject(s3Client.getS3BucketName(), objectKey);
+            // Pièce jointe 
+            helper.addAttachment(
+                attachName, 
+                new InputStreamResource(s3Obj.getObjectContent())
+            );
+        } catch (Exception e) {
+            log.warn("Unable to get S3 object => {}", e.getMessage());
         }
-    }
 
-    @Override
-    public void close() {
-        log.info("[XlsItemWriter] close => no file output here, flush is in the final tasklet");
-        // On ne fait pas workbook.write(...) ici.
-        // Ce sera fait dans le step final (UploadXlsToS3Tasklet).
-        super.close();
-    }
+        // 5) Envoyer l’email
+        mailSender.send(message);
+
+        return RepeatStatus.FINISHED;
+    };
 }
