@@ -7,14 +7,14 @@ import org.apache.logging.log4j.Logger;
 import org.springframework.batch.core.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.batch.repeat.RepeatStatus;
 
-import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.SimpleJdbcCall;
+
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -24,33 +24,27 @@ public class MonthlyPnLTasklet implements Tasklet {
 
     private static final Logger LOG = LogManager.getLogger(MonthlyPnLTasklet.class);
 
-    private final JdbcTemplate jdbcTemplate;
-    private final SimpleJdbcCall callProcedure;
-
-    /**
-     * Constructor injection : DataSource est autowired par Spring,
-     * on l'utilise pour construire le JdbcTemplate et le SimpleJdbcCall.
-     */
+    // Field injection : @Autowired direct sur la propriété
     @Autowired
-    public MonthlyPnLTasklet(DataSource dataSource) {
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-        this.callProcedure = new SimpleJdbcCall(this.jdbcTemplate)
-                .withProcedureName("CLY_Rpt_pl_ext_viewer_get");
-    }
+    private JdbcTemplate jdbcTemplate;
 
-    /**
-     * On exécute la logique du Tasklet :
-     *  - Lire le profitCentreId en base
-     *  - Construire la map de paramètres
-     *  - Appeler la procédure stockée
-     */
+    // On ne fait pas de SimpleJdbcCall dans un constructeur,
+    // on va l'initialiser "à la volée" dans execute().
+    private SimpleJdbcCall callProcedure;
+
     @Override
     @Transactional
     public RepeatStatus execute(StepContribution contribution, ChunkContext chunkContext) throws Exception {
         LOG.info("=== ENTER: MonthlyPnLTasklet.execute() ===");
 
         try {
-            // 1) Lecture du profit centre
+            // On initialise le SimpleJdbcCall ici, si pas déjà fait
+            if (callProcedure == null) {
+                callProcedure = new SimpleJdbcCall(jdbcTemplate)
+                        .withProcedureName("CLY_Rpt_pl_ext_viewer_get");
+            }
+
+            // 1) Lire le profit centre
             String profitCentreId = null;
             try {
                 profitCentreId = jdbcTemplate.queryForObject(
@@ -61,7 +55,7 @@ public class MonthlyPnLTasklet implements Tasklet {
                 LOG.error("Unable to retrieve profit centre ID", e);
             }
 
-            // 2) Construction de la map de paramètres
+            // 2) Construire la map
             Map<String, Object> inParams = new HashMap<>();
             inParams.put("p_user_id", MonthlyPnLConstant.USER_ID);
             inParams.put("p_groupby_filter", MonthlyPnLConstant.GROUP_BY_FILTER);
@@ -91,7 +85,7 @@ public class MonthlyPnLTasklet implements Tasklet {
 
             LOG.info("Calling procedure with params: {}", inParams);
 
-            // 3) Appeler la procédure stockée
+            // 3) Appeler la procédure
             callProcedure.execute(inParams);
 
             LOG.info("=== Procedure call successful ===");
