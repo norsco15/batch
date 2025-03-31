@@ -3,6 +3,7 @@ package com.example.monthlypnl.tasklet;
 import com.example.monthlypnl.constants.MonthlyPnLConstant;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
 import org.springframework.batch.core.StepContribution;
 import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.core.step.tasklet.Tasklet;
@@ -23,40 +24,44 @@ public class MonthlyPnLTasklet implements Tasklet {
 
     private static final Logger LOG = LogManager.getLogger(MonthlyPnLTasklet.class);
 
-    // Pour faire des requêtes simples
     private final JdbcTemplate jdbcTemplate;
+    private final SimpleJdbcCall callProcedure;
 
-    // Pour appeler la procédure
+    /**
+     * Constructor injection : DataSource est autowired par Spring,
+     * on l'utilise pour construire le JdbcTemplate et le SimpleJdbcCall.
+     */
+    @Autowired
+    public MonthlyPnLTasklet(DataSource dataSource) {
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
+        this.callProcedure = new SimpleJdbcCall(this.jdbcTemplate)
+                .withProcedureName("CLY_Rpt_pl_ext_viewer_get");
+    }
 
+    /**
+     * On exécute la logique du Tasklet :
+     *  - Lire le profitCentreId en base
+     *  - Construire la map de paramètres
+     *  - Appeler la procédure stockée
+     */
     @Override
     @Transactional
     public RepeatStatus execute(StepContribution contribution, ChunkContext chunkContext) throws Exception {
         LOG.info("=== ENTER: MonthlyPnLTasklet.execute() ===");
 
         try {
-            // 1) Ré    private final SimpleJdbcCall callProcedure;
-
-    @Autowired
-    public MonthlyPnLTasklet(DataSource dataSource) {
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-
-        // On prépare l'appel de la procédure stockée :
-        this.callProcedure = new SimpleJdbcCall(this.jdbcTemplate)
-                .withProcedureName("CLY_Rpt_pl_ext_viewer_get");
-        // Optionnellement, tu peux déclarer les paramètres IN si la DB en a besoin.
-    }
-cupérer le profit centre en base si besoin
+            // 1) Lecture du profit centre
             String profitCentreId = null;
             try {
                 profitCentreId = jdbcTemplate.queryForObject(
-                    "SELECT profit_centre_id FROM al_profit_centre WHERE profit_centre_mnemonic = 'CLP'",
-                    String.class
+                        "SELECT profit_centre_id FROM al_profit_centre WHERE profit_centre_mnemonic = 'CLP'",
+                        String.class
                 );
             } catch (Exception e) {
-                LOG.error("Unable to retrieve profit centre ID from DB", e);
+                LOG.error("Unable to retrieve profit centre ID", e);
             }
 
-            // 2) Construire la map de paramètres
+            // 2) Construction de la map de paramètres
             Map<String, Object> inParams = new HashMap<>();
             inParams.put("p_user_id", MonthlyPnLConstant.USER_ID);
             inParams.put("p_groupby_filter", MonthlyPnLConstant.GROUP_BY_FILTER);
@@ -79,12 +84,12 @@ cupérer le profit centre en base si besoin
             inParams.put("p_use_currency_code", MonthlyPnLConstant.USE_CURRENCY_CODE);
             inParams.put("p_currency_code", MonthlyPnLConstant.CURRENCY_CODE);
             inParams.put("p_report_currency_code", MonthlyPnLConstant.REPORT_CURRENCY_CODE);
-            inParams.put("p_effective_date", new Date()); // ex: date du jour
+            inParams.put("p_effective_date", new Date());
             inParams.put("p_client_type_code", MonthlyPnLConstant.CLIENT_TYPE_CODE);
             inParams.put("p_security_country_code", MonthlyPnLConstant.SECURITY_CODE);
             inParams.put("p_separate_div_currencies", MonthlyPnLConstant.SEPARATE_DIV_CURRENCIES);
 
-            LOG.info("Calling stored procedure with parameters: {}", inParams);
+            LOG.info("Calling procedure with params: {}", inParams);
 
             // 3) Appeler la procédure stockée
             callProcedure.execute(inParams);
