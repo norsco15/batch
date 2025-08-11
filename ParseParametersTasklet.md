@@ -1,3 +1,4 @@
+
 # ─────────────────────────────────────────────────────────────────────────────
 # pom.xml
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-jdbc</artifactId>
+      <artifactId>spring-boot-starter-data-jdbc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -55,8 +56,8 @@
     <!-- IBM MQ JMS client -->
     <dependency>
       <groupId>com.ibm.mq</groupId>
-      <artifactId>com.ibm.mq.allclient</artifactId>
-      <version>9.3.5.0</version>
+      <artifactId>com.ibm.mq.jakarta.client</artifactId>
+      <version>9.4.3.0</version>
     </dependency>
 
     <!-- Lombok -->
@@ -186,8 +187,8 @@ public class SSMBatchConfig extends DefaultBatchConfigurer { }
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.config;
 
-import com.ibm.mq.jms.MQConnectionFactory;
-import com.ibm.msg.client.wmq.WMQConstants;
+import com.ibm.mq.jakarta.jms.MQConnectionFactory;
+import com.ibm.msg.client.jakarta.wmq.WMQConstants;
 import jakarta.jms.ConnectionFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -478,7 +479,7 @@ public class SSMWriterComposite implements ItemWriter<JAXBElement<DealEvent>>, S
                 // Marshal → XML
                 StringWriter sw = new StringWriter();
                 var m = marshaller.createMarshaller();
-                m.setProperty(javax.xml.bind.Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
+                m.setProperty(jakarta.xml.bind.Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
                 m.marshal(el, new StreamResult(sw)); String xml = sw.toString();
                 if (addStandaloneHeader) {
                     if (!xml.startsWith("<?xml")) xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
@@ -509,22 +510,74 @@ public class SSMWriterComposite implements ItemWriter<JAXBElement<DealEvent>>, S
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.repository;
 
+import org.springframework.data.jdbc.repository.query.Modifying;
+import org.springframework.data.jdbc.repository.query.Query;
+import org.springframework.data.repository.Repository;
+import org.springframework.data.repository.query.Param;
+
+import com.cacib.ssm.model.SSMExtEvent; // aggregate marker for Spring Data JDBC
+
+public interface SSMRepository extends Repository<SSMExtEvent, Long> {
+
+    @Modifying
+    @Query("UPDATE EXT_EVENT SET EXT_PROCESSED = :flag WHERE EVENT_ID = :eventId")
+    void markExtProcessed(@Param("eventId") Long eventId, @Param("flag") String flag);
+
+    @Modifying
+    @Query("UPDATE USR_POS_LOADER SET SSM_EXT_PROCESSED = :flag WHERE EVT_NUM_SEQID = :eventId")
+    void markSsmProcessed(@Param("eventId") Long eventId, @Param("flag") String flag);
+
+    @Modifying
+    @Query("CALL usr_pkg_ssm.usr_ssm_archive()")
+    void archive();
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# src/main/java/com/cacib/ssm/model/SSMExtEvent.java
+# ─────────────────────────────────────────────────────────────────────────────
+package com.cacib.ssm.model;
+
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Table;
+import lombok.Data;
+
+@Data
+@Table("EXT_EVENT")
+public class SSMExtEvent {
+    @Id
+    private Long eventId;
+    private String extProcessed; // facultatif; utilisé comme agrégat minimal
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+package com.cacib.ssm.repository.impl;
+
+import com.cacib.ssm.repository.SSMRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 @RequiredArgsConstructor
-public class SSMRepository {
+public class SSMRepositoryImpl implements SSMRepository {
     private final JdbcTemplate jdbc;
 
+    @Override
     public void markExtProcessed(Long eventId, String flag) {
         jdbc.update("update EXT_EVENT set EXT_PROCESSED = ? where EVENT_ID = ?", flag, eventId);
     }
+
+    @Override
     public void markSsmProcessed(Long eventId, String flag) {
         jdbc.update("update USR_POS_LOADER set SSM_EXT_PROCESSED = ? where EVT_NUM_SEQID = ?", flag, eventId);
     }
-    public void archive() { jdbc.update("begin usr_pkg_ssm.usr_ssm_archive(); end;"); }
+
+    @Override
+    public void archive() {
+        jdbc.update("begin usr_pkg_ssm.usr_ssm_archive(); end;");
+    }
 }
 
 
