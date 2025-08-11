@@ -1,32 +1,35 @@
 <plugin>
-  <groupId>org.jvnet.jaxb2.maven2</groupId>
+  <groupId>org.glassfish.jaxb</groupId>
   <artifactId>maven-jaxb2-plugin</artifactId>
-  <version>0.15.3</version>
+  <version>4.0.5</version>
   <executions>
     <execution>
-      <goals>
-        <goal>generate</goal>
-      </goals>
+      <goals><goal>generate</goal></goals>
       <configuration>
-        <!-- Dossier où se trouve ssm.xsd -->
         <schemaDirectory>${project.basedir}/src/main/resources/xsd</schemaDirectory>
-
-        <!-- Inclus avec wildcard pour ne pas se planter sur le nom -->
         <schemaIncludes>
           <include>**/*.xsd</include>
         </schemaIncludes>
-
-        <!-- Où générer le code -->
         <generateDirectory>${project.build.directory}/generated-sources/jaxb</generateDirectory>
-
-        <!-- Le package Java des classes générées -->
         <generatePackage>com.cacib.sfcm.interfaces.ssm.binding</generatePackage>
-
         <forceRegenerate>true</forceRegenerate>
-        <args>
-          <arg>-no-header</arg>
-        </args>
       </configuration>
     </execution>
   </executions>
 </plugin>
+
+
+
+
+<!-- Runtime JAXB Jakarta -->
+<dependency>
+  <groupId>org.glassfish.jaxb</groupId>
+  <artifactId>jaxb-runtime</artifactId>
+  <version>4.0.5</version>
+</dependency>
+<!-- (optionnel, en général inclus par jaxb-runtime) -->
+<dependency>
+  <groupId>jakarta.xml.bind</groupId>
+  <artifactId>jakarta.xml.bind-api</artifactId>
+  <version>4.0.2</version>
+</dependency>
