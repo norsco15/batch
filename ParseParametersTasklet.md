@@ -1,35 +1,26 @@
-<plugin>
-  <groupId>org.glassfish.jaxb</groupId>
-  <artifactId>maven-jaxb2-plugin</artifactId>
-  <version>4.0.5</version>
-  <executions>
-    <execution>
-      <goals><goal>generate</goal></goals>
-      <configuration>
-        <schemaDirectory>${project.basedir}/src/main/resources/xsd</schemaDirectory>
-        <schemaIncludes>
-          <include>**/*.xsd</include>
-        </schemaIncludes>
-        <generateDirectory>${project.build.directory}/generated-sources/jaxb</generateDirectory>
-        <generatePackage>com.cacib.sfcm.interfaces.ssm.binding</generatePackage>
-        <forceRegenerate>true</forceRegenerate>
-      </configuration>
-    </execution>
-  </executions>
-</plugin>
+@Override
+public void open(ExecutionContext ec) throws ItemStreamException {
+  try {
+    delegate = new StoredProcedureItemReader<>();
+    delegate.setDataSource(dataSource);
+    delegate.setProcedureName("usr_pkg_ssm.usr_ssm_on_the_fly");
+    delegate.setParameters(new org.springframework.jdbc.core.SqlParameter[]{
+        new org.springframework.jdbc.core.SqlParameter("p_company_code", java.sql.Types.VARCHAR),
+        new org.springframework.jdbc.core.SqlOutParameter("p_out", oracle.jdbc.OracleTypes.CURSOR)
+    });
+    // IMPORTANT : setter qui renseigne l'IN + enregistre l'OUT (index 2)
+    delegate.setPreparedStatementSetter(ps -> {
+      java.sql.CallableStatement cs = (java.sql.CallableStatement) ps;
+      cs.setString(1, companyCode);
+      cs.registerOutParameter(2, oracle.jdbc.OracleTypes.CURSOR);
+    });
+    // (optionnel selon la version) :
+    // delegate.setRefCursorPosition(2);
 
-
-
-
-<!-- Runtime JAXB Jakarta -->
-<dependency>
-  <groupId>org.glassfish.jaxb</groupId>
-  <artifactId>jaxb-runtime</artifactId>
-  <version>4.0.5</version>
-</dependency>
-<!-- (optionnel, en général inclus par jaxb-runtime) -->
-<dependency>
-  <groupId>jakarta.xml.bind</groupId>
-  <artifactId>jakarta.xml.bind-api</artifactId>
-  <version>4.0.2</version>
-</dependency>
+    delegate.setRowMapper(new SSMRowMapper());
+    delegate.afterPropertiesSet();
+    delegate.open(ec);
+  } catch (Exception e) {
+    throw new ItemStreamException(e);
+  }
+}
