@@ -1,4 +1,3 @@
-
 # ─────────────────────────────────────────────────────────────────────────────
 # pom.xml
 # ─────────────────────────────────────────────────────────────────────────────
@@ -26,7 +25,7 @@
   </dependencyManagement>
 
   <dependencies>
-    <!-- Spring Batch / JDBC / JPA / JMS -->
+    <!-- Spring Batch / JDBC / JMS -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-batch</artifactId>
@@ -34,10 +33,6 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-jdbc</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-data-jpa</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -109,53 +104,38 @@
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/resources/application.yml
+# src/main/resources/application.properties
 # ─────────────────────────────────────────────────────────────────────────────
-spring:
-  datasource:
-    url: jdbc:oracle:thin:@//HOST:PORT/SERVICE
-    username: ${DB_USER}
-    password: ${DB_PASSWORD}
-    driver-class-name: oracle.jdbc.OracleDriver
-  jpa:
-    open-in-view: false
-    properties:
-      hibernate.jdbc.batch_size: 50
-      hibernate.cache.use_second_level_cache: false
-      hibernate.cache.use_query_cache: false
-  jms:
-    cache:
-      enabled: true
-  batch:
-    job:
-      enabled: false
+spring.datasource.url=jdbc:oracle:thin:@//HOST:PORT/SERVICE
+spring.datasource.username=${DB_USER}
+spring.datasource.password=${DB_PASSWORD}
+spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
 
-ssm:
-  mq:
-    host: localhost
-    port: 1414
-    channel: DEV.APP.SVRCONN
-    queueManager: QM1
-    queueName: SSM.OUT
-    user: app
-    password: secret
-  file:
-    root-output: /tmp/out
-    filename-prefix: SSM_File
-    date-format: yyyyMMdd_HHmmss
-    extension: xml
-    prefix-with-event-id: true
-  xml:
-    add-standalone-header: true
+spring.jms.cache.enabled=true
+spring.batch.job.enabled=false
 
-logging:
-  level:
-    root: INFO
-    com.cacib.ssm: DEBUG
+ssm.mq.host=localhost
+ssm.mq.port=1414
+ssm.mq.channel=DEV.APP.SVRCONN
+ssm.mq.queueManager=QM1
+ssm.mq.queueName=SSM.OUT
+ssm.mq.user=app
+ssm.mq.password=secret
+
+ssm.file.root-output=/tmp/out
+ssm.file.filename-prefix=SSM_File
+ssm.file.date-format=yyyyMMdd_HHmmss
+ssm.file.extension=xml
+ssm.file.prefix-with-event-id=true
+
+ssm.xml.add-standalone-header=true
+
+logging.level.root=INFO
+logging.level.com.cacib.ssm=DEBUG
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/SsmBatchApplication.java
+# src/main/java/com/cacib/ssm/SSMBatchApplication.java
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm;
 
@@ -170,11 +150,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 @RequiredArgsConstructor
-public class SsmBatchApplication implements CommandLineRunner {
+public class SSMBatchApplication implements CommandLineRunner {
     private final JobLauncher jobLauncher;
     private final Job ssmJob;
 
-    public static void main(String[] args) { SpringApplication.run(SsmBatchApplication.class, args); }
+    public static void main(String[] args) { SpringApplication.run(SSMBatchApplication.class, args); }
 
     @Override public void run(String... args) throws Exception {
         JobParameters params = new JobParametersBuilder()
@@ -190,7 +170,7 @@ public class SsmBatchApplication implements CommandLineRunner {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/config/BatchConfig.java
+# src/main/java/com/cacib/ssm/config/SSMBatchConfig.java
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.config;
 
@@ -198,11 +178,11 @@ import org.springframework.batch.core.configuration.annotation.DefaultBatchConfi
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-public class BatchConfig extends DefaultBatchConfigurer { }
+public class SSMBatchConfig extends DefaultBatchConfigurer { }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/config/JmsConfig.java
+# src/main/java/com/cacib/ssm/config/SSMJmsConfig.java
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.config;
 
@@ -215,7 +195,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jms.core.JmsTemplate;
 
 @Configuration
-public class JmsConfig {
+public class SSMJmsConfig {
     @Bean
     public ConnectionFactory mqConnectionFactory(
             @Value("${ssm.mq.host}") String host,
@@ -236,7 +216,7 @@ public class JmsConfig {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/config/JaxbConfig.java
+# src/main/java/com/cacib/ssm/config/SSMJaxbConfig.java
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.config;
 
@@ -245,7 +225,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.oxm.jaxb.Jaxb2Marshaller;
 
 @Configuration
-public class JaxbConfig {
+public class SSMJaxbConfig {
     @Bean
     public Jaxb2Marshaller dealEventMarshaller() {
         Jaxb2Marshaller m = new Jaxb2Marshaller();
@@ -256,99 +236,295 @@ public class JaxbConfig {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/entity/ExtEvent.java
+# src/main/java/com/cacib/ssm/config/batch/SSMJobConfig.java
 # ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.entity;
+package com.cacib.ssm.config.batch;
 
-import jakarta.persistence.*;
-import lombok.Data;
+import com.cacib.ssm.model.SSMModel;
+import com.cacib.ssm.config.batch.reader.SSMItemReader;
+import com.cacib.ssm.config.batch.processor.SSMItemProcessor;
+import com.cacib.ssm.config.batch.writer.SSMWriterComposite;
+import jakarta.xml.bind.JAXBElement;
+import com.cacib.ssm.binding.DealEvent;
+import lombok.RequiredArgsConstructor;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
 
-@Entity @Table(name = "EXT_EVENT") @Data
-public class ExtEvent {
-    @Id
-    @Column(name = "EVENT_ID")
-    private Long eventId;
+@Configuration
+@RequiredArgsConstructor
+public class SSMJobConfig {
 
-    @Column(name = "EXT_PROCESSED")
-    private String extProcessed;
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/entity/UsrPosLoader.java
-# ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.entity;
-
-import jakarta.persistence.*;
-import lombok.Data;
-
-@Entity @Table(name = "USR_POS_LOADER") @Data
-public class UsrPosLoader {
-    @Id
-    @Column(name = "EVT_NUM_SEQID")
-    private Long evtNumSeqid;
-
-    @Column(name = "SSM_EXT_PROCESSED")
-    private String ssmExtProcessed;
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/repository/ExtEventRepository.java
-# ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.repository;
-
-import com.cacib.ssm.entity.ExtEvent;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
-
-@Repository
-public interface ExtEventRepository extends JpaRepository<ExtEvent, Long> {
-    @Modifying @Transactional
-    @Query("update ExtEvent e set e.extProcessed=:flag where e.eventId=:eventId")
-    void markExtProcessed(@Param("eventId") Long eventId, @Param("flag") String flag);
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/repository/UsrPosLoaderRepository.java
-# ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.repository;
-
-import com.cacib.ssm.entity.UsrPosLoader;
-import org.springframework.data.jpa.repository.*;
-import org.springframework.data.repository.query.Param;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
-
-@Repository
-public interface UsrPosLoaderRepository extends JpaRepository<UsrPosLoader, Long> {
-    @Modifying @Transactional
-    @Query("update UsrPosLoader u set u.ssmExtProcessed=:flag where u.evtNumSeqid=:eventId")
-    void markSsmProcessed(@Param("eventId") Long eventId, @Param("flag") String flag);
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/repository/ArchiveDao.java
-# ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.repository;
-
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
-
-@Repository
-public class ArchiveDao {
-    @PersistenceContext private EntityManager em;
-
-    @Transactional
-    public void archiveSsmEvent() {
-        em.createNativeQuery("begin usr_pkg_ssm.usr_ssm_archive(); end;").executeUpdate();
+    @Bean
+    public Job ssmJob(JobRepository jobRepository, Step ssmStep) {
+        return new JobBuilder("ssmJob", jobRepository).start(ssmStep).build();
     }
+
+    @Bean
+    public Step ssmStep(JobRepository jobRepository, PlatformTransactionManager tx,
+                        SSMItemReader reader,
+                        SSMItemProcessor processor,
+                        SSMWriterComposite writer) {
+        return new StepBuilder("ssmStep", jobRepository)
+                .<SSMModel, JAXBElement<DealEvent>>chunk(50, tx)
+                .reader(reader)
+                .processor(processor)
+                .writer(writer)
+                .faultTolerant().skip(Exception.class).skipLimit(Integer.MAX_VALUE)
+                .build();
+    }
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# src/main/java/com/cacib/ssm/config/batch/reader/SSMItemReader.java
+# ─────────────────────────────────────────────────────────────────────────────
+package com.cacib.ssm.config.batch.reader;
+
+import com.cacib.ssm.model.SSMModel;
+import com.cacib.ssm.reader.SSMRowMapper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.batch.core.configuration.annotation.StepScope;
+import org.springframework.batch.item.ItemStreamException;
+import org.springframework.batch.item.ItemStreamReader;
+import org.springframework.batch.item.database.StoredProcedureItemReader;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import javax.sql.DataSource;
+import java.sql.Types;
+import java.util.HashMap;
+import java.util.Map;
+
+@Component
+@StepScope
+@RequiredArgsConstructor
+public class SSMItemReader implements ItemStreamReader<SSMModel> {
+    private final DataSource dataSource;
+    @Value("#{jobParameters['company_code']}") private String companyCode;
+    private StoredProcedureItemReader<SSMModel> delegate;
+
+    @Override public void open(org.springframework.batch.item.ExecutionContext ec) throws ItemStreamException {
+        try {
+            delegate = new StoredProcedureItemReader<>();
+            delegate.setDataSource(dataSource);
+            delegate.setProcedureName("usr_pkg_ssm.usr_ssm_on_the_fly");
+            delegate.setParameters(new org.springframework.jdbc.core.SqlParameter[] {
+                    new org.springframework.jdbc.core.SqlParameter("company_code", Types.VARCHAR),
+                    new org.springframework.jdbc.core.SqlOutParameter("output", oracle.jdbc.OracleTypes.CURSOR)
+            });
+            Map<String,Object> pv = new HashMap<>(); pv.put("company_code", companyCode); delegate.setParameterValues(pv);
+            delegate.setRowMapper(new SSMRowMapper());
+            delegate.afterPropertiesSet();
+            delegate.open(ec);
+        } catch (Exception e) { throw new ItemStreamException(e); }
+    }
+    @Override public SSMModel read() throws Exception { return delegate.read(); }
+    @Override public void update(org.springframework.batch.item.ExecutionContext ec) throws ItemStreamException { delegate.update(ec); }
+    @Override public void close() throws ItemStreamException { delegate.close(); }
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# src/main/java/com/cacib/ssm/config/batch/processor/SSMItemProcessor.java
+# ─────────────────────────────────────────────────────────────────────────────
+package com.cacib.ssm.config.batch.processor;
+
+import com.cacib.ssm.binding.*;
+import com.cacib.ssm.model.SSMModel;
+import jakarta.xml.bind.JAXBElement;
+import org.springframework.batch.core.configuration.annotation.StepScope;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.util.*;
+
+@Component
+@StepScope
+public class SSMItemProcessor implements ItemProcessor<SSMModel, JAXBElement<DealEvent>> {
+    @Value("#{jobParameters['interface_code']}") private String interfaceCode;
+
+    @Override
+    public JAXBElement<DealEvent> process(SSMModel model) throws Exception {
+        ObjectFactory of = new ObjectFactory();
+        DealEvent de = of.createDealEvent();
+        String app = (interfaceCode == null || interfaceCode.isBlank()) ? "4SIGHT" : interfaceCode;
+        de.setApplicationCode(app);
+        de.setEventType(model.getMvtType());
+
+        var df = jakarta.xml.datatype.DatatypeFactory.newInstance();
+        Calendar in = Calendar.getInstance(); if (model.getInputDateTimestamp()!=null) in.setTime(model.getInputDateTimestamp());
+        var execDate = df.newXMLGregorianCalendar(in.get(Calendar.YEAR), in.get(Calendar.MONTH)+1,
+                in.get(Calendar.DAY_OF_MONTH), in.get(Calendar.HOUR_OF_DAY), in.get(Calendar.MINUTE),
+                in.get(Calendar.SECOND), in.get(Calendar.MILLISECOND), (in.get(Calendar.ZONE_OFFSET)+in.get(Calendar.DST_OFFSET))/60000);
+        Calendar tr = Calendar.getInstance(); if (model.getTradeDate()!=null) tr.setTime(model.getTradeDate());
+        var tradeDate = df.newXMLGregorianCalendar(tr.get(Calendar.YEAR), tr.get(Calendar.MONTH)+1,
+                tr.get(Calendar.DAY_OF_MONTH), tr.get(Calendar.HOUR_OF_DAY), tr.get(Calendar.MINUTE),
+                tr.get(Calendar.SECOND), tr.get(Calendar.MILLISECOND), (tr.get(Calendar.ZONE_OFFSET)+tr.get(Calendar.DST_OFFSET))/60000);
+
+        de.setEventDateTime(execDate); de.setEventSequenceId(model.getEventId());
+
+        DealEvent.Execution exec = of.createDealEventExecution();
+        exec.setExecutionDateTime(execDate);
+        if (model.getPrice()!=null) exec.setPrice(model.getPrice());
+        if (model.getQuantity()!=null) { exec.setQuantity(model.getQuantity()); exec.setDiffQuantity(model.getQuantity()); }
+        exec.setValueDate(tradeDate); exec.setPaymentCurrencyId(model.getCurrency()); exec.setSide(model.getDirection()); exec.setFolioId(0L);
+
+        DealEvent.Execution.ExecutionRefs execRefs = of.createDealEventExecutionExecutionRefs();
+        DealEvent.Execution.ExecutionRefs.Ref execRef = of.createDealEventExecutionExecutionRefsRef();
+        execRef.setReferentialName(app);
+        execRef.setReference(model.getTransactionId()!=null? String.valueOf(model.getTransactionId()) : "0");
+        execRefs.getRef().add(execRef); exec.setExecutionRefs(execRefs);
+
+        DealEvent.Execution.Product product = of.createDealEventExecutionProduct();
+        DealEvent.Execution.Product.ProductRefs productRefs = of.createDealEventExecutionProductProductRefs();
+        DealEvent.Execution.Product.ProductRefs.Ref productRef = of.createDealEventExecutionProductProductRefsRef();
+        productRef.setReferentialName(app);
+        productRef.setReference((model.getStockCode()!=null?model.getStockCode():"") + (model.getMarketCode()!=null?"|"+model.getMarketCode():""));
+        productRefs.getRef().add(productRef); product.setProductRefs(productRefs);
+        product.setLegalWrapperType(model.getType()); product.setCurrencyId(model.getStockCurrency()); product.setName(model.getStockName());
+        exec.setProduct(product);
+
+        DealEvent.Execution.Broker broker = of.createDealEventExecutionBroker(); broker.setName("DEAL INTERNE"); broker.setReference("INTERNAL"); broker.setFees(BigDecimal.ZERO); exec.setBroker(broker);
+        DealEvent.Execution.Operator op = of.createDealEventExecutionOperator(); op.setOperatorId(model.getUserCode()); op.setName(model.getUserName()); exec.setOperator(op);
+        DealEvent.Execution.Order order = of.createDealEventExecutionOrder(); DealEvent.Execution.Order.MarketPlace mp = of.createDealEventExecutionOrderMarketPlace(); mp.setFees(BigDecimal.ZERO); mp.setName(model.getMarketCode()); order.setMarketPlace(mp); exec.setOrder(order);
+
+        DealEvent.Execution.LifeCycle lc = of.createDealEventExecutionLifeCycle();
+        List<DealEvent.Execution.LifeCycle.Step> steps = lc.getStep(); var now = df.newXMLGregorianCalendar(new GregorianCalendar());
+        DealEvent.Execution.LifeCycle.Step s1 = of.createDealEventExecutionLifeCycleStep(); s1.setDateTime(now); s1.setComponent(app); s1.setIndex((short)0);
+        DealEvent.Execution.LifeCycle.Step s2 = of.createDealEventExecutionLifeCycleStep(); s2.setDateTime(now); s2.setComponent(app); s2.setIndex((short)1); s2.setFrom("EMS_DISPATCHER"); s2.setTo("DISPATCHER_SSM_EU_XETRA");
+        steps.add(s1); steps.add(s2); exec.setLifeCycle(lc);
+
+        DealEvent.Execution.SsmInfo si = of.createDealEventExecutionSsmInfo(); DealEvent.Execution.SsmInfo.SsmZoneActivity za = of.createDealEventExecutionSsmInfoSsmZoneActivity(); za.setActivity("Others"); za.setCcy(model.getCurrency()); za.setZone("Europe"); si.setSsmZoneActivity(za); exec.setSsmInfo(si);
+
+        de.setExecution(exec);
+        return of.createDealEvent(de);
+    }
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# src/main/java/com/cacib/ssm/config/batch/writer/SSMWriterComposite.java
+# ─────────────────────────────────────────────────────────────────────────────
+package com.cacib.ssm.config.batch.writer;
+
+import com.cacib.ssm.binding.DealEvent;
+import com.cacib.ssm.service.SSMStatusService;
+import jakarta.xml.bind.JAXBElement;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.batch.core.ExitStatus;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.core.StepExecutionListener;
+import org.springframework.batch.core.configuration.annotation.StepScope;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jms.core.JmsTemplate;
+import org.springframework.oxm.jaxb.Jaxb2Marshaller;
+import org.springframework.stereotype.Component;
+
+import javax.xml.transform.stream.StreamResult;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+@Slf4j
+@Component
+@StepScope
+public class SSMWriterComposite implements ItemWriter<JAXBElement<DealEvent>>, StepExecutionListener {
+
+    private final JmsTemplate jmsTemplate;
+    private final SSMStatusService statusService;
+    private final Jaxb2Marshaller marshaller;
+
+    public SSMWriterComposite(JmsTemplate jmsTemplate, SSMStatusService statusService, Jaxb2Marshaller marshaller) {
+        this.jmsTemplate = jmsTemplate; this.statusService = statusService; this.marshaller = marshaller;
+    }
+
+    @Value("#{jobParameters['company_code']}") private String companyCode;
+    @Value("#{jobParameters['outputpath']}") private String outputPath;
+    @Value("${ssm.mq.queueName}") private String queueName;
+
+    @Value("${ssm.file.filename-prefix:SSM_File}") private String filenamePrefix;
+    @Value("${ssm.file.date-format:yyyyMMdd_HHmmss}") private String dateFormat;
+    @Value("${ssm.file.extension:xml}") private String extension;
+    @Value("${ssm.file.prefix-with-event-id:true}") private boolean prefixWithEventId;
+    @Value("${ssm.xml.add-standalone-header:true}") private boolean addStandaloneHeader;
+
+    private final Map<String,String> results = new LinkedHashMap<>();
+
+    @Override public void beforeStep(StepExecution stepExecution) { results.clear(); }
+
+    @Override
+    public void write(List<? extends JAXBElement<DealEvent>> items) throws Exception {
+        SimpleDateFormat sdf = new SimpleDateFormat(dateFormat);
+        String ts = sdf.format(new Date());
+        Path base = Path.of(outputPath, companyCode, "SSM"); Files.createDirectories(base);
+
+        for (JAXBElement<DealEvent> el : items) {
+            DealEvent de = el.getValue(); String eventId = String.valueOf(de.getEventSequenceId());
+            try {
+                // Marshal → XML
+                StringWriter sw = new StringWriter();
+                var m = marshaller.createMarshaller();
+                m.setProperty(javax.xml.bind.Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
+                m.marshal(el, new StreamResult(sw)); String xml = sw.toString();
+                if (addStandaloneHeader) {
+                    if (!xml.startsWith("<?xml")) xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
+" + xml;
+                    else if (!xml.contains("standalone=\"yes\"")) xml = xml.replaceFirst("<\?xml([^>]*)\?>","<?xml$1 standalone=\"yes\"?>");
+                }
+                // Fichier
+                String baseName = filenamePrefix + ts + "." + extension;
+                String filename = prefixWithEventId ? (eventId + "_" + baseName) : baseName;
+                Files.writeString(base.resolve(filename), xml, StandardCharsets.UTF_8);
+                // MQ
+                jmsTemplate.convertAndSend(queueName, xml);
+                results.put(eventId, "Y");
+            } catch (Exception ex) { log.error("Erreur sortie pour event {}", eventId, ex); results.put(eventId, "R"); }
+        }
+    }
+
+    @Override public ExitStatus afterStep(StepExecution stepExecution) {
+        try { statusService.updateStatuses(results); } catch (Exception e) { log.error("Erreur MAJ statuts", e); }
+        try { statusService.archive(); } catch (Exception e) { log.error("Erreur archivage", e); }
+        return ExitStatus.COMPLETED;
+    }
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# src/main/java/com/cacib/ssm/repository/SSMRepository.java
+# ─────────────────────────────────────────────────────────────────────────────
+package com.cacib.ssm.repository;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+@RequiredArgsConstructor
+public class SSMRepository {
+    private final JdbcTemplate jdbc;
+
+    public void markExtProcessed(Long eventId, String flag) {
+        jdbc.update("update EXT_EVENT set EXT_PROCESSED = ? where EVENT_ID = ?", flag, eventId);
+    }
+    public void markSsmProcessed(Long eventId, String flag) {
+        jdbc.update("update USR_POS_LOADER set SSM_EXT_PROCESSED = ? where EVT_NUM_SEQID = ?", flag, eventId);
+    }
+    public void archive() { jdbc.update("begin usr_pkg_ssm.usr_ssm_archive(); end;"); }
 }
 
 
@@ -357,33 +533,25 @@ public class ArchiveDao {
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.service;
 
-import com.cacib.ssm.repository.ArchiveDao;
-import com.cacib.ssm.repository.ExtEventRepository;
-import com.cacib.ssm.repository.UsrPosLoaderRepository;
+import com.cacib.ssm.repository.SSMRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 
 @Service @RequiredArgsConstructor @Slf4j
 public class SSMStatusService {
-    private final ExtEventRepository extRepo;
-    private final UsrPosLoaderRepository posRepo;
-    private final ArchiveDao archiveDao;
-
-    @Transactional
+    private final SSMRepository repo;
     public void updateStatuses(Map<String,String> results) {
         results.forEach((eventId, flag) -> {
             Long id = Long.valueOf(eventId);
-            extRepo.markExtProcessed(id, flag);
-            posRepo.markSsmProcessed(id, flag);
+            repo.markExtProcessed(id, flag);
+            repo.markSsmProcessed(id, flag);
             log.info("Updated statuses for {} -> {}", eventId, flag);
         });
     }
-
-    public void archive() { archiveDao.archiveSsmEvent(); }
+    public void archive() { repo.archive(); }
 }
 
 
@@ -424,306 +592,37 @@ public class SSMModel implements Serializable {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/reader/SsmRowMapper.java
+# src/main/java/com/cacib/ssm/reader/SSMRowMapper.java
 # ─────────────────────────────────────────────────────────────────────────────
 package com.cacib.ssm.reader;
 
 import com.cacib.ssm.model.SSMModel;
 import org.springframework.jdbc.core.RowMapper;
+import java.sql.ResultSet; import java.sql.SQLException;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-
-public class SsmRowMapper implements RowMapper<SSMModel> {
+public class SSMRowMapper implements RowMapper<SSMModel> {
     @Override public SSMModel mapRow(ResultSet rs, int rowNum) throws SQLException {
         SSMModel m = new SSMModel();
-        m.setEventCode(rs.getString("EVT TXT EVT CODE"));
-        m.setMvtType(rs.getString("EVT TXT MVT TYPE"));
-        m.setEventId(rs.getLong("EVI NUM SEQID"));
-        m.setTransactionId(rs.getLong("TRS NUM ID"));
-        m.setInputDateTimestamp(rs.getTimestamp("EVT TSP EXEC DATE"));
-        m.setPrice(rs.getBigDecimal("TRS NUM PRC"));
-        m.setQuantity(rs.getBigDecimal("TRS NUM QTY"));
-        m.setTradeDate(rs.getTimestamp("TRS DTE VALUE"));
-        m.setCurrency(rs.getString("PMT TXT CCY ID"));
-        m.setStockCode(rs.getString("REF TXT STK ID"));
-        m.setStockName(rs.getString("STK TXT NME"));
-        m.setMarketCode(rs.getString("STK TXT MKT PLACE"));
-        m.setStockCurrency(rs.getString("STK TXT CCY CDE"));
-        m.setUserCode(rs.getString("EVT TXT USR ID"));
-        m.setUserName(rs.getString("USR TXT NAME"));
-        m.setType(rs.getString("TRS TXT MVT ORIGIN"));
-        m.setDirection(rs.getString("TRS TXT SIDE"));
-        m.setNecId(rs.getLong("NCE NUM NC COLLAT ID"));
-        m.setTradeRef(rs.getLong("TRS NUM MVT ID"));
-        m.setSettlementId(rs.getLong("TRS NUM SETT ID"));
+        m.setEventCode(rs.getString("EVT_TXT_EVT_CODE"));
+        m.setMvtType(rs.getString("EVT_TXT_MVT_TYPE"));
+        m.setEventId(rs.getLong("EVI_NUM_SEQID"));
+        m.setTransactionId(rs.getLong("TRS_NUM_ID"));
+        m.setInputDateTimestamp(rs.getTimestamp("EVT_TSP_EXEC_DATE"));
+        m.setPrice(rs.getBigDecimal("TRS_NUM_PRC"));
+        m.setQuantity(rs.getBigDecimal("TRS_NUM_QTY"));
+        m.setTradeDate(rs.getTimestamp("TRS_DTE_VALUE"));
+        m.setCurrency(rs.getString("PMT_TXT_CCY_ID"));
+        m.setStockCode(rs.getString("REF_TXT_STK_ID"));
+        m.setStockName(rs.getString("STK_TXT_NME"));
+        m.setMarketCode(rs.getString("STK_TXT_MKT_PLACE"));
+        m.setStockCurrency(rs.getString("STK_TXT_CCY_CDE"));
+        m.setUserCode(rs.getString("EVT_TXT_USR_ID"));
+        m.setUserName(rs.getString("USR_TXT_NAME"));
+        m.setType(rs.getString("TRS_TXT_MVT_ORIGIN"));
+        m.setDirection(rs.getString("TRS_TXT_SIDE"));
+        m.setNecId(rs.getLong("NCE_NUM_NC_COLLAT_ID"));
+        m.setTradeRef(rs.getLong("TRS_NUM_MVT_ID"));
+        m.setSettlementId(rs.getLong("TRS_NUM_SETT_ID"));
         return m;
-    }
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/batch/SSMJobConfig.java
-# ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.batch;
-
-import com.cacib.ssm.binding.*;
-import com.cacib.ssm.model.SSMModel;
-import com.cacib.ssm.reader.SsmRowMapper;
-import com.cacib.ssm.service.SSMStatusService;
-import jakarta.xml.bind.JAXBElement;
-import lombok.RequiredArgsConstructor;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.job.builder.JobBuilder;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.*;
-import org.springframework.batch.item.database.StoredProcedureItemReader;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.oxm.jaxb.Jaxb2Marshaller;
-import org.springframework.transaction.PlatformTransactionManager;
-
-import javax.sql.DataSource;
-import java.math.BigDecimal;
-import java.sql.Types;
-import java.util.*;
-
-@Configuration
-@RequiredArgsConstructor
-public class SSMJobConfig {
-
-    private final Jaxb2Marshaller marshaller;
-    private final WriterComposite writerComposite;
-
-    @Bean
-    public Job ssmJob(JobRepository jobRepository, Step ssmStep) {
-        return new JobBuilder("ssmJob", jobRepository).start(ssmStep).build();
-    }
-
-    @Bean
-    public Step ssmStep(JobRepository jobRepository, PlatformTransactionManager tx,
-                        ItemReader<SSMModel> reader,
-                        ItemProcessor<SSMModel, JAXBElement<DealEvent>> processor,
-                        ItemWriter<JAXBElement<DealEvent>> writer) {
-        return new StepBuilder("ssmStep", jobRepository)
-                .<SSMModel, JAXBElement<DealEvent>>chunk(50, tx)
-                .reader(reader)
-                .processor(processor)
-                .writer(writer)
-                .faultTolerant().skip(Exception.class).skipLimit(Integer.MAX_VALUE)
-                .build();
-    }
-
-    // Reader = Appel PROC (REF CURSOR) en streaming
-    @Bean
-    @org.springframework.batch.core.configuration.annotation.StepScope
-    public StoredProcedureItemReader<SSMModel> reader(
-            DataSource dataSource,
-            @Value("#{jobParameters['company_code']}") String companyCode) throws Exception {
-        StoredProcedureItemReader<SSMModel> r = new StoredProcedureItemReader<>();
-        r.setDataSource(dataSource);
-        r.setProcedureName("usr_pkg_ssm.usr_ssm_on_the_fly");
-        r.setParameters(new org.springframework.jdbc.core.SqlParameter[]{
-                new org.springframework.jdbc.core.SqlParameter("company_code", Types.VARCHAR),
-                new org.springframework.jdbc.core.SqlOutParameter("output", oracle.jdbc.OracleTypes.CURSOR)
-        });
-        java.util.Map<String,Object> pv = new java.util.HashMap<>(); pv.put("company_code", companyCode); r.setParameterValues(pv);
-        r.setRowMapper(new SsmRowMapper());
-        r.afterPropertiesSet();
-        return r;
-    }
-
-    @Bean
-    @org.springframework.batch.core.configuration.annotation.StepScope
-    public ItemProcessor<SSMModel, JAXBElement<DealEvent>> processor(
-            @Value("#{jobParameters['interface_code']}") String interfaceCode) {
-        return model -> {
-            ObjectFactory of = new ObjectFactory();
-            DealEvent de = of.createDealEvent();
-            String app = (interfaceCode == null || interfaceCode.isBlank()) ? "4SIGHT" : interfaceCode;
-            de.setApplicationCode(app);
-            de.setEventType(model.getMvtType());
-
-            var df = jakarta.xml.datatype.DatatypeFactory.newInstance();
-            Calendar in = Calendar.getInstance();
-            if (model.getInputDateTimestamp() != null) in.setTime(model.getInputDateTimestamp());
-            var execDate = df.newXMLGregorianCalendar(in.get(Calendar.YEAR), in.get(Calendar.MONTH)+1,
-                    in.get(Calendar.DAY_OF_MONTH), in.get(Calendar.HOUR_OF_DAY), in.get(Calendar.MINUTE),
-                    in.get(Calendar.SECOND), in.get(Calendar.MILLISECOND),
-                    (in.get(Calendar.ZONE_OFFSET)+in.get(Calendar.DST_OFFSET))/60000);
-
-            Calendar tr = Calendar.getInstance();
-            if (model.getTradeDate() != null) tr.setTime(model.getTradeDate());
-            var tradeDate = df.newXMLGregorianCalendar(tr.get(Calendar.YEAR), tr.get(Calendar.MONTH)+1,
-                    tr.get(Calendar.DAY_OF_MONTH), tr.get(Calendar.HOUR_OF_DAY), tr.get(Calendar.MINUTE),
-                    tr.get(Calendar.SECOND), tr.get(Calendar.MILLISECOND),
-                    (tr.get(Calendar.ZONE_OFFSET)+tr.get(Calendar.DST_OFFSET))/60000);
-
-            de.setEventDateTime(execDate);
-            de.setEventSequenceId(model.getEventId());
-
-            DealEvent.Execution exec = of.createDealEventExecution();
-            exec.setExecutionDateTime(execDate);
-            if (model.getPrice()!=null) exec.setPrice(model.getPrice());
-            if (model.getQuantity()!=null) { exec.setQuantity(model.getQuantity()); exec.setDiffQuantity(model.getQuantity()); }
-            exec.setValueDate(tradeDate);
-            exec.setPaymentCurrencyId(model.getCurrency());
-            exec.setSide(model.getDirection());
-            exec.setFolioId(0L);
-
-            DealEvent.Execution.ExecutionRefs execRefs = of.createDealEventExecutionExecutionRefs();
-            DealEvent.Execution.ExecutionRefs.Ref execRef = of.createDealEventExecutionExecutionRefsRef();
-            execRef.setReferentialName(app);
-            execRef.setReference(model.getTransactionId()!=null? String.valueOf(model.getTransactionId()) : "0");
-            execRefs.getRef().add(execRef);
-            exec.setExecutionRefs(execRefs);
-
-            DealEvent.Execution.Product product = of.createDealEventExecutionProduct();
-            DealEvent.Execution.Product.ProductRefs productRefs = of.createDealEventExecutionProductProductRefs();
-            DealEvent.Execution.Product.ProductRefs.Ref productRef = of.createDealEventExecutionProductProductRefsRef();
-            productRef.setReferentialName(app);
-            productRef.setReference((model.getStockCode()!=null?model.getStockCode():"") + (model.getMarketCode()!=null?"|"+model.getMarketCode():""));
-            productRefs.getRef().add(productRef);
-            product.setProductRefs(productRefs);
-            product.setLegalWrapperType(model.getType());
-            product.setCurrencyId(model.getStockCurrency());
-            product.setName(model.getStockName());
-            exec.setProduct(product);
-
-            DealEvent.Execution.Broker broker = of.createDealEventExecutionBroker();
-            broker.setName("DEAL INTERNE"); broker.setReference("INTERNAL"); broker.setFees(BigDecimal.ZERO);
-            exec.setBroker(broker);
-
-            DealEvent.Execution.Operator op = of.createDealEventExecutionOperator();
-            op.setOperatorId(model.getUserCode()); op.setName(model.getUserName());
-            exec.setOperator(op);
-
-            DealEvent.Execution.Order order = of.createDealEventExecutionOrder();
-            DealEvent.Execution.Order.MarketPlace mp = of.createDealEventExecutionOrderMarketPlace();
-            mp.setFees(BigDecimal.ZERO); mp.setName(model.getMarketCode());
-            order.setMarketPlace(mp); exec.setOrder(order);
-
-            DealEvent.Execution.LifeCycle lc = of.createDealEventExecutionLifeCycle();
-            java.util.List<DealEvent.Execution.LifeCycle.Step> steps = lc.getStep();
-            var now = df.newXMLGregorianCalendar(new GregorianCalendar());
-            DealEvent.Execution.LifeCycle.Step s1 = of.createDealEventExecutionLifeCycleStep(); s1.setDateTime(now); s1.setComponent(app); s1.setIndex((short)0);
-            DealEvent.Execution.LifeCycle.Step s2 = of.createDealEventExecutionLifeCycleStep(); s2.setDateTime(now); s2.setComponent(app); s2.setIndex((short)1); s2.setFrom("EMS_DISPATCHER"); s2.setTo("DISPATCHER_SSM_EU_XETRA");
-            steps.add(s1); steps.add(s2); exec.setLifeCycle(lc);
-
-            DealEvent.Execution.SsmInfo si = of.createDealEventExecutionSsmInfo();
-            DealEvent.Execution.SsmInfo.SsmZoneActivity za = of.createDealEventExecutionSsmInfoSsmZoneActivity();
-            za.setActivity("Others"); za.setCcy(model.getCurrency()); za.setZone("Europe"); si.setSsmZoneActivity(za);
-            exec.setSsmInfo(si);
-
-            de.setExecution(exec);
-            return of.createDealEvent(de);
-        };
-    }
-
-    @Bean
-    @org.springframework.batch.core.configuration.annotation.StepScope
-    public ItemWriter<JAXBElement<DealEvent>> writer(
-            @Value("#{jobParameters['company_code']}") String companyCode,
-            @Value("#{jobParameters['outputpath']}") String outputPath,
-            @Value("${ssm.mq.queueName}") String queueName) {
-        writerComposite.setCompanyCode(companyCode);
-        writerComposite.setOutputPath(outputPath);
-        writerComposite.setQueueName(queueName);
-        writerComposite.setMarshaller(marshaller);
-        return writerComposite;
-    }
-}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# src/main/java/com/cacib/ssm/batch/WriterComposite.java
-# ─────────────────────────────────────────────────────────────────────────────
-package com.cacib.ssm.batch;
-
-import com.cacib.ssm.binding.DealEvent;
-import com.cacib.ssm.service.SSMStatusService;
-import jakarta.xml.bind.JAXBElement;
-import lombok.Setter;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.batch.core.ExitStatus;
-import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.StepExecutionListener;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jms.core.JmsTemplate;
-import org.springframework.oxm.jaxb.Jaxb2Marshaller;
-import org.springframework.stereotype.Component;
-
-import javax.xml.transform.stream.StreamResult;
-import java.io.StringWriter;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.text.SimpleDateFormat;
-import java.util.*;
-
-@Slf4j
-@Component
-public class WriterComposite implements ItemWriter<JAXBElement<DealEvent>>, StepExecutionListener {
-
-    private final JmsTemplate jmsTemplate;
-    private final SSMStatusService statusService;
-
-    @Setter private String companyCode;
-    @Setter private String outputPath;
-    @Setter private String queueName;
-    @Setter private Jaxb2Marshaller marshaller;
-
-    @Value("${ssm.file.filename-prefix:SSM_File}") private String filenamePrefix;
-    @Value("${ssm.file.date-format:yyyyMMdd_HHmmss}") private String dateFormat;
-    @Value("${ssm.file.extension:xml}") private String extension;
-    @Value("${ssm.file.prefix-with-event-id:true}") private boolean prefixWithEventId;
-    @Value("${ssm.xml.add-standalone-header:true}") private boolean addStandaloneHeader;
-
-    private final Map<String,String> results = new LinkedHashMap<>();
-
-    public WriterComposite(JmsTemplate jmsTemplate, SSMStatusService statusService) {
-        this.jmsTemplate = jmsTemplate; this.statusService = statusService;
-    }
-
-    @Override
-    public void write(List<? extends JAXBElement<DealEvent>> items) throws Exception {
-        SimpleDateFormat sdf = new SimpleDateFormat(dateFormat);
-        String ts = sdf.format(new Date());
-        Path base = Path.of(outputPath, companyCode, "SSM"); Files.createDirectories(base);
-
-        for (JAXBElement<DealEvent> el : items) {
-            DealEvent de = el.getValue(); String eventId = String.valueOf(de.getEventSequenceId());
-            try {
-                // Marshal → XML
-                StringWriter sw = new StringWriter();
-                var m = marshaller.createMarshaller();
-                m.setProperty(javax.xml.bind.Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
-                m.marshal(el, new StreamResult(sw)); String xml = sw.toString();
-                if (addStandaloneHeader) {
-                    if (!xml.startsWith("<?xml")) xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
-" + xml;
-                    else if (!xml.contains("standalone=\"yes\"")) xml = xml.replaceFirst("<\?xml([^>]*)\?>","<?xml$1 standalone=\"yes\"?>");
-                }
-                // Fichier
-                String baseName = filenamePrefix + ts + "." + extension;
-                String filename = prefixWithEventId ? (eventId + "_" + baseName) : baseName;
-                Files.writeString(base.resolve(filename), xml, StandardCharsets.UTF_8);
-                // MQ
-                jmsTemplate.convertAndSend(queueName, xml);
-                results.put(eventId, "Y");
-            } catch (Exception ex) { log.error("Erreur sortie pour event {}", eventId, ex); results.put(eventId, "R"); }
-        }
-    }
-
-    @Override public void beforeStep(StepExecution stepExecution) { results.clear(); }
-
-    @Override public ExitStatus afterStep(StepExecution stepExecution) {
-        try { statusService.updateStatuses(results); } catch (Exception e) { log.error("Erreur MAJ statuts", e); }
-        try { statusService.archive(); } catch (Exception e) { log.error("Erreur archivage", e); }
-        return ExitStatus.COMPLETED;
     }
 }
