@@ -58,23 +58,25 @@ MONTH_ALIASES = {
     "dec": 12, "december": 12, "decembre": 12,
 }
 
-# Regex sur noms de mois (dans un texte déjà normalisé sans accents)
-MONTH_NAME_PATTERN = re.compile(
-    r"\b(" + "|".join(sorted(MONTH_ALIASES.keys(), key=len, reverse=True)) + r")\b\s*(\d{4})?",
+# Regex sur noms de mois au début de ligne : "March 2025", "Juin 2025", "Octobre 2025"
+MONTH_LINE_PATTERN = re.compile(
+    r'^\s*(?P<month>' + "|".join(sorted(MONTH_ALIASES.keys(), key=len, reverse=True)) + r')'
+    r'\s*(?P<year>20\d{2})?\b',
     flags=re.IGNORECASE,
 )
 
-# Patterns numériques typiques
-DATE_PATTERNS = [
+# Formats numériques de "header" au début de ligne
+MONTH_NUM_LINE_PATTERNS = [
     # 2025-10-15 ou 2025/10/15
-    re.compile(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b"),
+    re.compile(r'^\s*(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b'),
     # 15-10-2025 ou 15/10/2025
-    re.compile(r"\b(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](20\d{2})\b"),
+    re.compile(r'^\s*(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](20\d{2})\b'),
     # 20251015
-    re.compile(r"\b(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b"),
+    re.compile(r'^\s*(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\b'),
     # 10/2025 ou 10-2025
-    re.compile(r"\b(0?[1-9]|1[0-2])[-/](20\d{2})\b"),
+    re.compile(r'^\s*(0?[1-9]|1[0-2])[-/](20\d{2})\b'),
 ]
+
 
 
 def _normalize_text(text: str) -> str:
@@ -97,41 +99,49 @@ def _infer_year_for_month(month: int, reference_date: date) -> int:
 
 def extract_dates_from_text(text: str, reference_date: date) -> list[date]:
     """
-    Retourne une liste de dates (au 1er du mois) détectées dans le texte :
-    - noms de mois FR/EN (+/- année)
-    - formats numériques (YYYY-MM-DD, DD/MM/YYYY, YYYYMMDD, MM/YYYY, …)
+    Retourne les mois de commentaire détectés :
+    - uniquement les mois / dates AU DÉBUT DE CHAQUE LIGNE
+    - on ne regarde pas les dates au milieu des phrases
     """
     if not isinstance(text, str) or not text.strip():
         return []
 
-    normalized = _normalize_text(text)
     dates: list[date] = []
+    lines = text.splitlines()
 
-    # 1) Noms de mois FR/EN
-    for m in MONTH_NAME_PATTERN.finditer(normalized):
-        month_key = m.group(1)
-        year_str = m.group(2)
-        month = MONTH_ALIASES.get(month_key.lower())
-        if not month:
+    for line in lines:
+        if not line.strip():
             continue
-        if year_str:
-            year = int(year_str)
-        else:
-            year = _infer_year_for_month(month, reference_date)
-        dates.append(date(year, month, 1))
 
-    # 2) Formats numériques
-    for pattern in DATE_PATTERNS:
-        for m in pattern.finditer(text):
-            g = m.groups()
-            # On harmonise en (year, month, day)
-            if pattern is DATE_PATTERNS[0]:       # YYYY-MM-DD
+        # 1) On regarde d'abord un mois en toutes lettres au début de la ligne
+        norm = _normalize_text(line)
+        m = MONTH_LINE_PATTERN.search(norm)
+        if m:
+            month_key = m.group("month").lower()
+            year_str = m.group("year")
+            month = MONTH_ALIASES.get(month_key)
+            if not month:
+                continue
+            if year_str:
+                year = int(year_str)
+            else:
+                year = _infer_year_for_month(month, reference_date)
+            dates.append(date(year, month, 1))
+            continue  # on ignore les autres dates de la ligne
+
+        # 2) Sinon, on regarde les formats numériques AU DÉBUT de la ligne
+        for patt in MONTH_NUM_LINE_PATTERNS:
+            m2 = patt.search(line)
+            if not m2:
+                continue
+            g = m2.groups()
+            if patt is MONTH_NUM_LINE_PATTERNS[0]:       # YYYY-MM-DD
                 year, month, day = int(g[0]), int(g[1]), int(g[2])
-            elif pattern is DATE_PATTERNS[1]:     # DD-MM-YYYY
+            elif patt is MONTH_NUM_LINE_PATTERNS[1]:     # DD-MM-YYYY
                 day, month, year = int(g[0]), int(g[1]), int(g[2])
-            elif pattern is DATE_PATTERNS[2]:     # YYYYMMDD
+            elif patt is MONTH_NUM_LINE_PATTERNS[2]:     # YYYYMMDD
                 year, month, day = int(g[0]), int(g[1]), int(g[2])
-            else:                                 # MM-YYYY
+            else:                                        # MM-YYYY
                 month, year = int(g[0]), int(g[1])
                 day = 1
 
@@ -139,10 +149,11 @@ def extract_dates_from_text(text: str, reference_date: date) -> list[date]:
                 d = date(year, month, day)
             except ValueError:
                 continue
-            # On ne garde que le mois (1er du mois)
-            dates.append(date(d.year, d.month, 1))
 
-    # On supprime les doublons
+            dates.append(date(d.year, d.month, 1))
+            break  # on ne prend qu'un header par ligne
+
+    # Suppression des doublons + tri
     dates = sorted(set(dates))
     return dates
 
