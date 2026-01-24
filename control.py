@@ -86,4 +86,29 @@ def main():
 
     COL_REF = "Control Point Reference"
     COL_TITLE_EN = "Control Point Title"
-    COL_TITLE_FR = "Control Point Title Loc
+    COL_TITLE_FR = "Control Point Title Local Language"
+
+    for row_idx in range(2, ws.max_row + 1):
+        cp_ref_raw = get_excel_value(ws, headers, row_idx, COL_REF).strip()
+        if not cp_ref_raw:
+            continue
+
+        cp_ref_clean = normalize_ref(cp_ref_raw)  # ✅ enlève F_ITG_
+
+        title_en = get_excel_value(ws, headers, row_idx, COL_TITLE_EN)
+        title_fr = get_excel_value(ws, headers, row_idx, COL_TITLE_FR)
+
+        ref_fs = safe_name(cp_ref_clean)
+        out_dir = os.path.join(output_root, ref_fs)
+        os.makedirs(out_dir, exist_ok=True)
+
+        out_path = os.path.join(out_dir, f"{ref_fs}.docx")
+
+        doc = Document(template_path)
+        fill_first_table(doc, cp_ref_clean, title_en, title_fr)
+        doc.save(out_path)
+
+        print(f"Generated: {out_path}")
+
+if __name__ == "__main__":
+    main()
