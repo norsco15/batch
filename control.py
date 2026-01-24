@@ -1,114 +1,38 @@
-import os
-from docx import Document
-from openpyxl import load_workbook
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-PREFIX = "F_ITG_"
-
-def normalize_ref(ref: str) -> str:
-    if ref is None:
-        return ""
-    ref = str(ref).strip()
-    return ref[len(PREFIX):] if ref.startswith(PREFIX) else ref
-
-def safe_name(name: str) -> str:
-    bad = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
-    for ch in bad:
-        name = name.replace(ch, "_")
-    return name.strip()
-
-def get_headers(ws):
-    headers = {}
-    for c in range(1, ws.max_column + 1):
-        v = ws.cell(row=1, column=c).value
-        if v is not None:
-            headers[str(v).strip()] = c
-    return headers
-
-def get_excel_value(ws, headers, row_idx: int, col_name: str) -> str:
-    if col_name not in headers:
-        raise ValueError(f"Colonne '{col_name}' introuvable. Dispo: {list(headers.keys())}")
-    val = ws.cell(row=row_idx, column=headers[col_name]).value
-    return "" if val is None else str(val)
+def _clear_cell_paragraphs(cell):
+    # Supprime tous les paragraphes existants (important pour éviter une "ligne" fantôme)
+    for p in cell.paragraphs:
+        p._element.getparent().remove(p._element)
+    # Recrée un paragraphe vide
+    cell.add_paragraph()
 
 def set_cell_lines_single_paragraph(cell, lines, *, bold=False, font_size=None, align=None):
-    """
-    Écrit plusieurs lignes dans UNE SEULE cellule / UN SEUL paragraphe
-    (avec des retours à la ligne), pour éviter les paragraphes en plus.
-    """
-    cell.text = ""
+    _clear_cell_paragraphs(cell)
+
     p = cell.paragraphs[0]
+
+    # ✅ évite l'effet "ligne en plus" (espacement)
+    pf = p.paragraph_format
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
+    pf.line_spacing = 1
+
     if align is not None:
         p.alignment = align
 
-    run = p.add_run(lines[0] if lines else "")
-    run.bold = bold
+    if not lines:
+        return
+
+    r = p.add_run(lines[0])
+    r.bold = bold
     if font_size is not None:
-        run.font.size = Pt(font_size)
+        r.font.size = Pt(font_size)
 
     for line in lines[1:]:
-        run.add_break()
-        run2 = p.add_run(line)
-        run2.bold = bold
+        r.add_break()
+        r2 = p.add_run(line)
+        r2.bold = bold
         if font_size is not None:
-            run2.font.size = Pt(font_size)
-
-def fill_first_table(doc: Document, cp_ref_clean: str, title_en: str, title_fr: str):
-    t = doc.tables[0]  # 1er tableau (2 lignes)
-
-    # Ligne 1: header centré, 18, gras
-    set_cell_lines_single_paragraph(
-        t.rows[0].cells[0],
-        [cp_ref_clean],
-        bold=True,
-        font_size=18,
-        align=WD_ALIGN_PARAGRAPH.CENTER
-    )
-
-    # Ligne 2: 2 lignes dans la même cellule (sans créer de paragraphe)
-    set_cell_lines_single_paragraph(
-        t.rows[1].cells[0],
-        [title_en, title_fr]
-    )
-
-def main():
-    excel_path = "input.xlsx"
-    sheet_name = "Sheet1"
-    template_path = "template.docx"
-    output_root = "output_scorecards"
-
-    os.makedirs(output_root, exist_ok=True)
-
-    wb = load_workbook(excel_path, data_only=True)
-    ws = wb[sheet_name]
-    headers = get_headers(ws)
-
-    COL_REF = "Control Point Reference"
-    COL_TITLE_EN = "Control Point Title"
-    COL_TITLE_FR = "Control Point Title Local Language"
-
-    for row_idx in range(2, ws.max_row + 1):
-        cp_ref_raw = get_excel_value(ws, headers, row_idx, COL_REF).strip()
-        if not cp_ref_raw:
-            continue
-
-        cp_ref_clean = normalize_ref(cp_ref_raw)  # ✅ enlève F_ITG_
-
-        title_en = get_excel_value(ws, headers, row_idx, COL_TITLE_EN)
-        title_fr = get_excel_value(ws, headers, row_idx, COL_TITLE_FR)
-
-        ref_fs = safe_name(cp_ref_clean)
-        out_dir = os.path.join(output_root, ref_fs)
-        os.makedirs(out_dir, exist_ok=True)
-
-        out_path = os.path.join(out_dir, f"{ref_fs}.docx")
-
-        doc = Document(template_path)
-        fill_first_table(doc, cp_ref_clean, title_en, title_fr)
-        doc.save(out_path)
-
-        print(f"Generated: {out_path}")
-
-if __name__ == "__main__":
-    main()
+            r2.font.size = Pt(font_size)
