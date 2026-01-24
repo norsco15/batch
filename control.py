@@ -1,44 +1,81 @@
-def remove_row(table, row_idx: int):
-    # Suppression low-level d’une ligne de tableau (python-docx n’a pas d’API officielle)
-    tbl = table._tbl
-    tr = table.rows[row_idx]._tr
-    tbl.remove(tr)
+import re
 
-def trim_table_to_n_rows(table, n: int):
-    # Garde uniquement les n premières lignes
-    while len(table.rows) > n:
-        remove_row(table, len(table.rows) - 1)
+def norm_ws(s: str) -> str:
+    """Normalise les espaces et retours ligne pour comparer."""
+    s = "" if s is None else str(s)
+    s = s.replace("\xa0", " ")          # nbsp
+    s = s.replace("\n", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
-
-from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-def fill_first_table(doc: Document, cp_ref_clean: str, title_en: str, title_fr: str):
-    t = doc.tables[0]  # 1er tableau
-
-    # ✅ Force exactement 2 lignes (supprime toute ligne “fantôme”)
-    trim_table_to_n_rows(t, 2)
-
-    # Ligne 1: header
-    cell0 = t.rows[0].cells[0]
-    cell0.text = cp_ref_clean
-    p0 = cell0.paragraphs[0]
-    p0.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    # format du run
-    if p0.runs:
-        run0 = p0.runs[0]
-    else:
-        run0 = p0.add_run(cp_ref_clean)
-    run0.bold = True
-    run0.font.size = Pt(18)
-
-    # Ligne 2: EN + saut de ligne + FR (sans créer de paragraphes supplémentaires)
-    cell1 = t.rows[1].cells[0]
-    cell1.text = ""  # reset
-    p1 = cell1.paragraphs[0]
-    r = p1.add_run(title_en)
+def write_en_fr_in_cell(cell, en_text: str, fr_text: str):
+    """
+    Remplit UNE cellule avec 2 lignes (EN puis FR) sans créer de paragraphes en plus.
+    """
+    cell.text = ""
+    p = cell.paragraphs[0]
+    r = p.add_run(en_text or "")
     r.add_break()
-    p1.add_run(title_fr)
+    p.add_run(fr_text or "")
 
-    # ✅ Re-force encore après écriture (au cas où le template réinjecte une ligne)
-    trim_table_to_n_rows(t, 2)
+def find_cell_containing(doc, needle: str):
+    """
+    Retourne (table, r, c) de la 1ère cellule dont le texte contient needle (normalisé).
+    """
+    needle_n = norm_ws(needle)
+    for table in doc.tables:
+        for r_i, row in enumerate(table.rows):
+            for c_i, cell in enumerate(row.cells):
+                if needle_n in norm_ws(cell.text):
+                    return table, r_i, c_i
+    return None
+
+
+
+
+
+def fill_score_table(doc, s1_en, s1_fr, s2_en, s2_fr, s3_en, s3_fr, s4_en, s4_fr):
+    mapping = [
+        ("Score = 1 : Control Point Satisfactory", s1_en, s1_fr),
+        ("Score = 2 : Control Point Globally Satisfactory", s2_en, s2_fr),
+        ("Score = 3 : Control Point Marginally Satisfactory", s3_en, s3_fr),
+        ("Score = 4 : Control Point Unsatisfactory", s4_en, s4_fr),
+    ]
+
+    for header_text, en_val, fr_val in mapping:
+        found = find_cell_containing(doc, header_text)
+        if not found:
+            raise ValueError(f"Header introuvable dans Word: '{header_text}'")
+
+        table, r, c = found
+
+        # On écrit dans la cellule en dessous (même colonne)
+        if r + 1 >= len(table.rows):
+            raise IndexError(f"Pas de ligne sous le header '{header_text}'")
+
+        target_cell = table.rows[r + 1].cells[c]
+        write_en_fr_in_cell(target_cell, en_val, fr_val)
+
+
+
+
+
+
+
+s1_en = get_excel_value(ws, headers, row_idx, "Control Point Satisfactory")
+s1_fr = get_excel_value(ws, headers, row_idx, "Control Point Satisfactory Local Language")
+
+s2_en = get_excel_value(ws, headers, row_idx, "Control Point Globally Satisfactory")
+s2_fr = get_excel_value(ws, headers, row_idx, "Control Point Globally Satisfactory Local Language")
+
+s3_en = get_excel_value(ws, headers, row_idx, "Control Point Marginally Satisfactory")
+s3_fr = get_excel_value(ws, headers, row_idx, "Control Point Marginally Satisfactory Local Language")
+
+s4_en = get_excel_value(ws, headers, row_idx, "Control Point Unsatisfactory")
+s4_fr = get_excel_value(ws, headers, row_idx, "Control Point Unsatisfactory Local Language")
+
+
+
+
+
+fill_score_table(doc, s1_en, s1_fr, s2_en, s2_fr, s3_en, s3_fr, s4_en, s4_fr)
