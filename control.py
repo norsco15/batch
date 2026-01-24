@@ -1,6 +1,22 @@
 import os
 from docx import Document
 from openpyxl import load_workbook
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+PREFIX = "F_ITG_"
+
+def normalize_ref(ref: str) -> str:
+    if ref is None:
+        return ""
+    ref = str(ref).strip()
+    return ref[len(PREFIX):] if ref.startswith(PREFIX) else ref
+
+def safe_name(name: str) -> str:
+    bad = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+    for ch in bad:
+        name = name.replace(ch, "_")
+    return name.strip()
 
 def get_headers(ws):
     headers = {}
@@ -16,32 +32,51 @@ def get_excel_value(ws, headers, row_idx: int, col_name: str) -> str:
     val = ws.cell(row=row_idx, column=headers[col_name]).value
     return "" if val is None else str(val)
 
-def set_cell_paragraphs(cell, lines):
-    # Remplace le contenu par 1 paragraphe par ligne (retours à la ligne propres)
+def set_cell_lines_single_paragraph(cell, lines, *, bold=False, font_size=None, align=None):
+    """
+    Écrit plusieurs lignes dans UNE SEULE cellule / UN SEUL paragraphe
+    (avec des retours à la ligne), pour éviter les paragraphes en plus.
+    """
     cell.text = ""
-    p0 = cell.paragraphs[0]
-    p0.text = lines[0] if lines else ""
+    p = cell.paragraphs[0]
+    if align is not None:
+        p.alignment = align
+
+    run = p.add_run(lines[0] if lines else "")
+    run.bold = bold
+    if font_size is not None:
+        run.font.size = Pt(font_size)
+
     for line in lines[1:]:
-        cell.add_paragraph(line)
+        run.add_break()
+        run2 = p.add_run(line)
+        run2.bold = bold
+        if font_size is not None:
+            run2.font.size = Pt(font_size)
 
-def fill_first_table(doc: Document, cp_ref: str, title_en: str, title_fr: str):
+def fill_first_table(doc: Document, cp_ref_clean: str, title_en: str, title_fr: str):
     t = doc.tables[0]  # 1er tableau (2 lignes)
-    cp_ref = (cp_ref or "").strip()
-    set_cell_paragraphs(t.rows[0].cells[0], [cp_ref])
-    set_cell_paragraphs(t.rows[1].cells[0], [title_en, title_fr])
 
-def safe_name(name: str) -> str:
-    # Nettoyage minimal pour éviter caractères interdits Windows
-    bad = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
-    for ch in bad:
-        name = name.replace(ch, "_")
-    return name.strip()
+    # Ligne 1: header centré, 18, gras
+    set_cell_lines_single_paragraph(
+        t.rows[0].cells[0],
+        [cp_ref_clean],
+        bold=True,
+        font_size=18,
+        align=WD_ALIGN_PARAGRAPH.CENTER
+    )
+
+    # Ligne 2: 2 lignes dans la même cellule (sans créer de paragraphe)
+    set_cell_lines_single_paragraph(
+        t.rows[1].cells[0],
+        [title_en, title_fr]
+    )
 
 def main():
     excel_path = "input.xlsx"
     sheet_name = "Sheet1"
     template_path = "template.docx"
-    output_root = "output_scorecards"  # dossier racine de sortie
+    output_root = "output_scorecards"
 
     os.makedirs(output_root, exist_ok=True)
 
@@ -49,35 +84,6 @@ def main():
     ws = wb[sheet_name]
     headers = get_headers(ws)
 
-    # Colonnes Excel
-    COL_REF = "Control Point Reference"                 # déjà sans "F_ITG_"
+    COL_REF = "Control Point Reference"
     COL_TITLE_EN = "Control Point Title"
-    COL_TITLE_FR = "Control Point Title Local Language"
-
-    # Parcours de toutes les lignes (à partir de la ligne 2)
-    for row_idx in range(2, ws.max_row + 1):
-        cp_ref = get_excel_value(ws, headers, row_idx, COL_REF).strip()
-
-        # Ignore lignes vides (ou fin de fichier)
-        if not cp_ref:
-            continue
-
-        title_en = get_excel_value(ws, headers, row_idx, COL_TITLE_EN)
-        title_fr = get_excel_value(ws, headers, row_idx, COL_TITLE_FR)
-
-        # Noms dossier/fichier
-        ref_clean = safe_name(cp_ref)
-        out_dir = os.path.join(output_root, ref_clean)
-        os.makedirs(out_dir, exist_ok=True)
-
-        out_path = os.path.join(out_dir, f"{ref_clean}.docx")
-
-        # Génération Word
-        doc = Document(template_path)
-        fill_first_table(doc, cp_ref, title_en, title_fr)
-        doc.save(out_path)
-
-        print(f"Generated: {out_path}")
-
-if __name__ == "__main__":
-    main()
+    COL_TITLE_FR = "Control Point Title Loc
