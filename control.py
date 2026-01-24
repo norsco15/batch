@@ -1,68 +1,89 @@
-def split_by_interpoint(text: str):
-    """
-    Split sur le caractère interpoint '·' et nettoie.
-    """
-    if text is None:
-        return []
-    parts = [p.strip() for p in str(text).split("·")]
-    return [p for p in parts if p]  # enlève vides
+import re
 
-def find_table_and_header_row(doc, header_text: str):
+def extract_intro_and_bullets(text: str):
     """
-    Trouve le tableau qui contient une cellule dont le texte contient header_text.
-    Retourne (table, header_row_index, header_col_index)
+    Retourne (intro, bullets)
+    - intro = texte avant la 1ère bulle
+    - bullets = liste des sous-points (sans le 'o')
+    Détecte les bulles de type: 'o xxx' (o en tant que token)
     """
-    found = find_cell_containing(doc, header_text)  # ton helper existant
-    if not found:
-        return None
-    table, r, c = found
-    return table, r, c
+    if not text:
+        return "", []
+
+    s = str(text).replace("\r", "\n")
+    s = re.sub(r"\s+", " ", s).strip()  # normalisation légère (comme dans Excel)
+
+    # Split sur le token bullet "o " quand il est séparé (début ou après espace/ : ; )
+    # Ex: "describe: o item1 o item2"
+    parts = re.split(r'(?:(?<=^)|(?<=[\s:;]))o\s+', s)
+
+    intro = parts[0].strip()
+    bullets = [p.strip() for p in parts[1:] if p.strip()]
+    return intro, bullets
+
+
+
 
 def fill_verification_table(doc, cp_ref_clean: str, meth_en: str, meth_fr: str):
-    # 1) Split EN/FR
+    # Split par interpoint '·' -> V1, V2, V3, ...
     en_points = split_by_interpoint(meth_en)
     fr_points = split_by_interpoint(meth_fr)
 
-    n = max(len(en_points), len(fr_points))
-    if n == 0:
-        return  # rien à remplir
+    n_main = max(len(en_points), len(fr_points))
+    if n_main == 0:
+        return
 
-    # 2) Trouver le tableau "Verification ID"
+    # Trouver le tableau "Verification ID"
     res = find_table_and_header_row(doc, "Verification ID")
     if not res:
         raise ValueError("Table 'Verification ID' introuvable dans le Word.")
     table, header_r, _ = res
 
-    # 3) Supprimer toutes les lignes sous le header (lignes fantômes / template)
-    # On garde toutes les lignes jusqu’au header inclus.
-    trim_table_to_row_count(table, header_r + 1)  # tu as déjà cette fonction
+    # Nettoyer : garder jusqu'au header inclus (supprime lignes fantômes)
+    trim_table_to_row_count(table, header_r + 1)
 
-    # 4) Ajouter exactement n lignes
-    for i in range(n):
+    # Construire toutes les lignes à écrire (liste de tuples: (id, en_text, fr_text))
+    rows_to_write = []
+
+    for i in range(n_main):
+        v_num = i + 1
+        en_text = en_points[i] if i < len(en_points) else ""
+        fr_text = fr_points[i] if i < len(fr_points) else ""
+
+        en_intro, en_bullets = extract_intro_and_bullets(en_text)
+        fr_intro, fr_bullets = extract_intro_and_bullets(fr_text)
+
+        # S'il y a des bulles (EN ou FR), on génère Vx-01, Vx-02, ...
+        if en_bullets or fr_bullets:
+            nb = max(len(en_bullets), len(fr_bullets))
+            for j in range(nb):
+                sub = j + 1
+                verif_id = f"{cp_ref_clean}-V{v_num}-{sub:02d}"
+
+                en_b = en_bullets[j] if j < len(en_bullets) else ""
+                fr_b = fr_bullets[j] if j < len(fr_bullets) else ""
+
+                # Texte final : intro + retour ligne + "o ..." (si la bulle existe)
+                en_final = (en_intro + (" o " + en_b if en_b else "")).strip()
+                fr_final = (fr_intro + (" o " + fr_b if fr_b else "")).strip()
+
+                rows_to_write.append((verif_id, en_final, fr_final))
+        else:
+            # Pas de bulles -> on garde Vx
+            verif_id = f"{cp_ref_clean}-V{v_num}"
+            rows_to_write.append((verif_id, en_text.strip(), fr_text.strip()))
+
+    # Ajouter exactement le bon nombre de lignes
+    for _ in range(len(rows_to_write)):
         table.add_row()
 
-        row_idx = header_r + 1 + i
-        row = table.rows[row_idx]
-
-        verif_id = f"{cp_ref_clean}-V{i+1}"
+    # Remplir les lignes
+    for idx, (verif_id, en_val, fr_val) in enumerate(rows_to_write):
+        row = table.rows[header_r + 1 + idx]
         row.cells[0].text = verif_id
+        write_en_fr_in_cell(row.cells[1], en_val, fr_val)
+        row.cells[2].text = ""  # Result
+        row.cells[3].text = ""  # Evidence
 
-        en_txt = en_points[i] if i < len(en_points) else ""
-        fr_txt = fr_points[i] if i < len(fr_points) else ""
-        write_en_fr_in_cell(row.cells[1], en_txt, fr_txt)  # ton helper existant
-
-        # Result / Evidence laissés vides
-        row.cells[2].text = ""
-        row.cells[3].text = ""
-
-    # 5) Re-force le nombre de lignes (header + n)
-    trim_table_to_row_count(table, header_r + 1 + n)
-
-
-
-
-
-meth_en = get_excel_value(ws, headers, row_idx, "Control Point Control Methodology")
-meth_fr = get_excel_value(ws, headers, row_idx, "Control Point Control Methodology Local Language")
-
-fill_verification_table(doc, cp_ref_clean, meth_en, meth_fr)
+    # Re-force : header + N lignes (supprime fantômes éventuels)
+    trim_table_to_row_count(table, header_r + 1 + len(rows_to_write))
