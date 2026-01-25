@@ -14,11 +14,7 @@ def RSK_GAI_002_count_open_risk_cards(
 ) -> int:
     """
     RSK_GAI_002 — Nombre de risk cards OPEN (comptées par 'Local risk reference' unique).
-
-    Contexte :
-    - Dans le fichier, 'Local risk reference' peut apparaître en doublon (une risk card peut pointer vers plusieurs Risk ID).
-    - On veut compter le nombre de risk cards ouvertes => nombre de 'Local risk reference' DISTINCTS
-      dont le State n'est pas dans: Retired, Cancelled, Closed.
+    OPEN = State not in {Retired, Cancelled, Closed}
     """
     excluded = {s.lower() for s in (excluded_states or EXCLUDED_STATES_OPEN)}
 
@@ -35,27 +31,40 @@ def RSK_GAI_002_count_open_risk_cards(
     if dropna_refs:
         refs = refs.dropna()
 
-    # Normalisation légère (trim) pour éviter les doublons dus aux espaces
     refs_norm = refs.astype(str).str.strip()
-
     return int(refs_norm.nunique())
+
+def write_metrics_to_excel(metrics: list[tuple[str, int]], output_path: Union[str, Path]) -> None:
+    """
+    Écrit les métriques dans un fichier Excel avec 2 colonnes :
+    - Indicator
+    - Value
+    """
+    df_out = pd.DataFrame(metrics, columns=["Indicator", "Value"])
+    df_out.to_excel(output_path, index=False, engine="openpyxl")
 
 def main():
     # ======== À ADAPTER =========
     risk_cards_path = "risk_cards.xlsx"
-    sheet_name = 0  # ou "RiskCards"
-    state_col = "State"
-    local_risk_ref_col = "Local risk reference"
+    risk_cards_sheet = 0  # ou "RiskCards"
+    output_path = "resultats_indicateurs.xlsx"
     # ============================
 
+    metrics: list[tuple[str, int]] = []
+
+    # --- Indicateur RSK_GAI_002 ---
     rsk_gai_002 = RSK_GAI_002_count_open_risk_cards(
         risk_cards_path=risk_cards_path,
-        sheet_name=sheet_name,
-        state_col=state_col,
-        local_risk_ref_col=local_risk_ref_col,
+        sheet_name=risk_cards_sheet,
+        state_col="State",
+        local_risk_ref_col="Local risk reference",
     )
+    metrics.append(("RSK_GAI_002", rsk_gai_002))
 
-    print(f"RSK_GAI_002 (Open risk cards, distinct '{local_risk_ref_col}') = {rsk_gai_002}")
+    # (plus tard: ajouter d'autres indicateurs ici, puis append dans metrics)
+
+    write_metrics_to_excel(metrics, output_path)
+    print(f"Fichier généré: {output_path}")
 
 if __name__ == "__main__":
     main()
