@@ -1,89 +1,47 @@
-import re
+import pandas as pd
+from typing import Union, Optional
+from pathlib import Path
 
-def extract_intro_and_bullets(text: str):
+EXCLUDED_STATES_OPEN = {"retired", "cancelled", "closed"}
+
+def RSK_GAI_002_count_open_risk_cards(
+    risk_cards_path: Union[str, Path],
+    sheet_name: Union[str, int] = 0,
+    state_col: str = "State",
+    excluded_states: Optional[set[str]] = None,
+) -> int:
     """
-    Retourne (intro, bullets)
-    - intro = texte avant la 1ère bulle
-    - bullets = liste des sous-points (sans le 'o')
-    Détecte les bulles de type: 'o xxx' (o en tant que token)
+    RSK_GAI_002 — Nombre de risk cards OPEN.
+    Une risk card est considérée OPEN si son 'State' n'est pas dans: Retired, Cancelled, Closed.
     """
-    if not text:
-        return "", []
+    excluded = {s.lower() for s in (excluded_states or EXCLUDED_STATES_OPEN)}
 
-    s = str(text).replace("\r", "\n")
-    s = re.sub(r"\s+", " ", s).strip()  # normalisation légère (comme dans Excel)
+    df = pd.read_excel(risk_cards_path, sheet_name=sheet_name, engine="openpyxl")
 
-    # Split sur le token bullet "o " quand il est séparé (début ou après espace/ : ; )
-    # Ex: "describe: o item1 o item2"
-    parts = re.split(r'(?:(?<=^)|(?<=[\s:;]))o\s+', s)
+    if state_col not in df.columns:
+        raise ValueError(
+            f"Colonne '{state_col}' introuvable. Colonnes disponibles: {list(df.columns)}"
+        )
 
-    intro = parts[0].strip()
-    bullets = [p.strip() for p in parts[1:] if p.strip()]
-    return intro, bullets
+    state_norm = df[state_col].astype(str).str.strip().str.lower()
+    open_mask = ~state_norm.isin(excluded)
 
+    return int(open_mask.sum())
 
+def main():
+    # ======== À ADAPTER =========
+    risk_cards_path = "risk_cards.xlsx"
+    sheet_name = 0            # ou "RiskCards"
+    state_col = "State"
+    # ============================
 
+    rsk_gai_002 = RSK_GAI_002_count_open_risk_cards(
+        risk_cards_path=risk_cards_path,
+        sheet_name=sheet_name,
+        state_col=state_col,
+    )
 
-def fill_verification_table(doc, cp_ref_clean: str, meth_en: str, meth_fr: str):
-    # Split par interpoint '·' -> V1, V2, V3, ...
-    en_points = split_by_interpoint(meth_en)
-    fr_points = split_by_interpoint(meth_fr)
+    print(f"RSK_GAI_002 (Open risk cards) = {rsk_gai_002}")
 
-    n_main = max(len(en_points), len(fr_points))
-    if n_main == 0:
-        return
-
-    # Trouver le tableau "Verification ID"
-    res = find_table_and_header_row(doc, "Verification ID")
-    if not res:
-        raise ValueError("Table 'Verification ID' introuvable dans le Word.")
-    table, header_r, _ = res
-
-    # Nettoyer : garder jusqu'au header inclus (supprime lignes fantômes)
-    trim_table_to_row_count(table, header_r + 1)
-
-    # Construire toutes les lignes à écrire (liste de tuples: (id, en_text, fr_text))
-    rows_to_write = []
-
-    for i in range(n_main):
-        v_num = i + 1
-        en_text = en_points[i] if i < len(en_points) else ""
-        fr_text = fr_points[i] if i < len(fr_points) else ""
-
-        en_intro, en_bullets = extract_intro_and_bullets(en_text)
-        fr_intro, fr_bullets = extract_intro_and_bullets(fr_text)
-
-        # S'il y a des bulles (EN ou FR), on génère Vx-01, Vx-02, ...
-        if en_bullets or fr_bullets:
-            nb = max(len(en_bullets), len(fr_bullets))
-            for j in range(nb):
-                sub = j + 1
-                verif_id = f"{cp_ref_clean}-V{v_num}-{sub:02d}"
-
-                en_b = en_bullets[j] if j < len(en_bullets) else ""
-                fr_b = fr_bullets[j] if j < len(fr_bullets) else ""
-
-                # Texte final : intro + retour ligne + "o ..." (si la bulle existe)
-                en_final = (en_intro + (" o " + en_b if en_b else "")).strip()
-                fr_final = (fr_intro + (" o " + fr_b if fr_b else "")).strip()
-
-                rows_to_write.append((verif_id, en_final, fr_final))
-        else:
-            # Pas de bulles -> on garde Vx
-            verif_id = f"{cp_ref_clean}-V{v_num}"
-            rows_to_write.append((verif_id, en_text.strip(), fr_text.strip()))
-
-    # Ajouter exactement le bon nombre de lignes
-    for _ in range(len(rows_to_write)):
-        table.add_row()
-
-    # Remplir les lignes
-    for idx, (verif_id, en_val, fr_val) in enumerate(rows_to_write):
-        row = table.rows[header_r + 1 + idx]
-        row.cells[0].text = verif_id
-        write_en_fr_in_cell(row.cells[1], en_val, fr_val)
-        row.cells[2].text = ""  # Result
-        row.cells[3].text = ""  # Evidence
-
-    # Re-force : header + N lignes (supprime fantômes éventuels)
-    trim_table_to_row_count(table, header_r + 1 + len(rows_to_write))
+if __name__ == "__main__":
+    main()
