@@ -1,70 +1,78 @@
-import pandas as pd
-from typing import Union, Optional
-from pathlib import Path
+fill_verification_table(doc, cp_ref_clean, meth_en, meth_fr, out_dir)
 
-EXCLUDED_STATES_OPEN = {"retired", "cancelled", "closed"}
 
-def RSK_GAI_002_count_open_risk_cards(
-    risk_cards_path: Union[str, Path],
-    sheet_name: Union[str, int] = 0,
-    state_col: str = "State",
-    local_risk_ref_col: str = "Local risk reference",
-    excluded_states: Optional[set[str]] = None,
-    dropna_refs: bool = True,
-) -> int:
-    """
-    RSK_GAI_002 — Nombre de risk cards OPEN (comptées par 'Local risk reference' unique).
-    OPEN = State not in {Retired, Cancelled, Closed}
-    """
-    excluded = {s.lower() for s in (excluded_states or EXCLUDED_STATES_OPEN)}
 
-    df = pd.read_excel(risk_cards_path, sheet_name=sheet_name, engine="openpyxl")
+import os
 
-    missing = [c for c in [state_col, local_risk_ref_col] if c not in df.columns]
-    if missing:
-        raise ValueError(f"Colonnes manquantes: {missing}. Colonnes dispo: {list(df.columns)}")
+def fill_verification_table(doc, cp_ref_clean: str, meth_en: str, meth_fr: str, out_dir: str):
+    # Split par interpoint '·' -> V1, V2, V3, ...
+    en_points = split_by_interpoint(meth_en)
+    fr_points = split_by_interpoint(meth_fr)
 
-    state_norm = df[state_col].astype(str).str.strip().str.lower()
-    open_mask = ~state_norm.isin(excluded)
+    n_main = max(len(en_points), len(fr_points))
+    if n_main == 0:
+        return
 
-    refs = df.loc[open_mask, local_risk_ref_col]
-    if dropna_refs:
-        refs = refs.dropna()
+    # Trouver le tableau "Verification ID"
+    res = find_table_and_header_row(doc, "Verification ID")
+    if not res:
+        raise ValueError("Table 'Verification ID' introuvable dans le Word.")
+    table, header_r, _ = res
 
-    refs_norm = refs.astype(str).str.strip()
-    return int(refs_norm.nunique())
+    # Nettoyer : garder jusqu'au header inclus (supprime lignes fantômes)
+    trim_table_to_row_count(table, header_r + 1)
 
-def write_metrics_to_excel(metrics: list[tuple[str, int]], output_path: Union[str, Path]) -> None:
-    """
-    Écrit les métriques dans un fichier Excel avec 2 colonnes :
-    - Indicator
-    - Value
-    """
-    df_out = pd.DataFrame(metrics, columns=["Indicator", "Value"])
-    df_out.to_excel(output_path, index=False, engine="openpyxl")
+    # Construire toutes les lignes à écrire
+    rows_to_write = []
 
-def main():
-    # ======== À ADAPTER =========
-    risk_cards_path = "risk_cards.xlsx"
-    risk_cards_sheet = 0  # ou "RiskCards"
-    output_path = "resultats_indicateurs.xlsx"
-    # ============================
+    for i in range(n_main):
+        v_num = i + 1
+        en_text = en_points[i] if i < len(en_points) else ""
+        fr_text = fr_points[i] if i < len(fr_points) else ""
 
-    metrics: list[tuple[str, int]] = []
+        # ✅ créer le dossier du point Vx
+        v_dir_name = f"{cp_ref_clean}-V{v_num}"
+        v_dir_path = os.path.join(out_dir, v_dir_name)
+        os.makedirs(v_dir_path, exist_ok=True)
 
-    # --- Indicateur RSK_GAI_002 ---
-    rsk_gai_002 = RSK_GAI_002_count_open_risk_cards(
-        risk_cards_path=risk_cards_path,
-        sheet_name=risk_cards_sheet,
-        state_col="State",
-        local_risk_ref_col="Local risk reference",
-    )
-    metrics.append(("RSK_GAI_002", rsk_gai_002))
+        en_intro, en_bullets = extract_intro_and_bullets(en_text)
+        fr_intro, fr_bullets = extract_intro_and_bullets(fr_text)
 
-    # (plus tard: ajouter d'autres indicateurs ici, puis append dans metrics)
+        # Si bulles -> Vx-01, Vx-02, ...
+        if en_bullets or fr_bullets:
+            nb = max(len(en_bullets), len(fr_bullets))
+            for j in range(nb):
+                sub = j + 1
+                verif_id = f"{cp_ref_clean}-V{v_num}-{sub:02d}"
 
-    write_metrics_to_excel(metrics, output_path)
-    print(f"Fichier généré: {output_path}")
+                # ✅ créer dossier du sous-point dans le dossier Vx
+                sub_dir_path = os.path.join(v_dir_path, verif_id)
+                os.makedirs(sub_dir_path, exist_ok=True)
 
-if __name__ == "__main__":
-    main()
+                en_b = en_bullets[j] if j < len(en_bullets) else ""
+                fr_b = fr_bullets[j] if j < len(fr_bullets) else ""
+
+                # ✅ retour ligne avant la bulle (comme demandé)
+                en_final = (en_intro + ("\n" + "o " + en_b if en_b else "")).strip()
+                fr_final = (fr_intro + ("\n" + "o " + fr_b if fr_b else "")).strip()
+
+                rows_to_write.append((verif_id, en_final, fr_final))
+        else:
+            # Pas de bulles -> Vx
+            verif_id = f"{cp_ref_clean}-V{v_num}"
+            rows_to_write.append((verif_id, en_text.strip(), fr_text.strip()))
+
+    # Ajouter exactement le bon nombre de lignes
+    for _ in range(len(rows_to_write)):
+        table.add_row()
+
+    # Remplir les lignes
+    for idx, (verif_id, en_val, fr_val) in enumerate(rows_to_write):
+        row = table.rows[header_r + 1 + idx]
+        row.cells[0].text = verif_id
+        write_en_fr_in_cell(row.cells[1], en_val, fr_val)
+        row.cells[2].text = ""  # Result
+        row.cells[3].text = ""  # Evidence
+
+    # Re-force : header + N lignes (supprime fantômes éventuels)
+    trim_table_to_row_count(table, header_r + 1 + len(rows_to_write))
