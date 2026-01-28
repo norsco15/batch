@@ -1,78 +1,127 @@
-fill_verification_table(doc, cp_ref_clean, meth_en, meth_fr, out_dir)
+import pandas as pd
+from typing import Union, Optional
+from pathlib import Path
 
+EXCLUDED_STATES_OPEN = {"retired", "cancelled", "closed"}
 
+def _read_risk_cards(
+    risk_cards_path: Union[str, Path],
+    sheet_name: Union[str, int] = 0,
+) -> pd.DataFrame:
+    return pd.read_excel(risk_cards_path, sheet_name=sheet_name, engine="openpyxl")
 
-import os
+def _open_mask(
+    df: pd.DataFrame,
+    state_col: str,
+    excluded_states: set[str],
+) -> pd.Series:
+    state_norm = df[state_col].astype(str).str.strip().str.lower()
+    return ~state_norm.isin(excluded_states)
 
-def fill_verification_table(doc, cp_ref_clean: str, meth_en: str, meth_fr: str, out_dir: str):
-    # Split par interpoint '·' -> V1, V2, V3, ...
-    en_points = split_by_interpoint(meth_en)
-    fr_points = split_by_interpoint(meth_fr)
+def RSK_GAI_002_count_open_risk_cards(
+    risk_cards_path: Union[str, Path],
+    sheet_name: Union[str, int] = 0,
+    state_col: str = "State",
+    local_risk_ref_col: str = "Local risk reference",
+    excluded_states: Optional[set[str]] = None,
+    dropna_refs: bool = True,
+) -> int:
+    excluded = {s.lower() for s in (excluded_states or EXCLUDED_STATES_OPEN)}
 
-    n_main = max(len(en_points), len(fr_points))
-    if n_main == 0:
-        return
+    df = _read_risk_cards(risk_cards_path, sheet_name)
 
-    # Trouver le tableau "Verification ID"
-    res = find_table_and_header_row(doc, "Verification ID")
-    if not res:
-        raise ValueError("Table 'Verification ID' introuvable dans le Word.")
-    table, header_r, _ = res
+    missing = [c for c in [state_col, local_risk_ref_col] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Colonnes manquantes: {missing}. Colonnes dispo: {list(df.columns)}")
 
-    # Nettoyer : garder jusqu'au header inclus (supprime lignes fantômes)
-    trim_table_to_row_count(table, header_r + 1)
+    open_mask = _open_mask(df, state_col, excluded)
 
-    # Construire toutes les lignes à écrire
-    rows_to_write = []
+    refs = df.loc[open_mask, local_risk_ref_col]
+    if dropna_refs:
+        refs = refs.dropna()
 
-    for i in range(n_main):
-        v_num = i + 1
-        en_text = en_points[i] if i < len(en_points) else ""
-        fr_text = fr_points[i] if i < len(fr_points) else ""
+    refs_norm = refs.astype(str).str.strip()
+    return int(refs_norm.nunique())
 
-        # ✅ créer le dossier du point Vx
-        v_dir_name = f"{cp_ref_clean}-V{v_num}"
-        v_dir_path = os.path.join(out_dir, v_dir_name)
-        os.makedirs(v_dir_path, exist_ok=True)
+def RSK_GAI_003_count_open_major_extreme_risk_cards(
+    risk_cards_path: Union[str, Path],
+    sheet_name: Union[str, int] = 0,
+    state_col: str = "State",
+    local_risk_ref_col: str = "Local risk reference",
+    residual_risk_level_col: str = "Residual risk level",
+    included_levels: Optional[set[str]] = None,
+    excluded_states: Optional[set[str]] = None,
+    dropna_refs: bool = True,
+) -> int:
+    """
+    RSK_GAI_003 — Nombre de risk cards OPEN (même périmètre que RSK_GAI_002)
+    dont 'Residual risk level' est Major ou Extreme.
 
-        en_intro, en_bullets = extract_intro_and_bullets(en_text)
-        fr_intro, fr_bullets = extract_intro_and_bullets(fr_text)
+    On compte le nombre de 'Local risk reference' DISTINCTS.
+    Valeurs attendues par défaut : '3 - Major' et '4 - Extreme'
+    """
+    excluded = {s.lower() for s in (excluded_states or EXCLUDED_STATES_OPEN)}
+    levels = included_levels or {"3 - Major", "4 - Extreme"}
 
-        # Si bulles -> Vx-01, Vx-02, ...
-        if en_bullets or fr_bullets:
-            nb = max(len(en_bullets), len(fr_bullets))
-            for j in range(nb):
-                sub = j + 1
-                verif_id = f"{cp_ref_clean}-V{v_num}-{sub:02d}"
+    df = _read_risk_cards(risk_cards_path, sheet_name)
 
-                # ✅ créer dossier du sous-point dans le dossier Vx
-                sub_dir_path = os.path.join(v_dir_path, verif_id)
-                os.makedirs(sub_dir_path, exist_ok=True)
+    required = [state_col, local_risk_ref_col, residual_risk_level_col]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Colonnes manquantes: {missing}. Colonnes dispo: {list(df.columns)}")
 
-                en_b = en_bullets[j] if j < len(en_bullets) else ""
-                fr_b = fr_bullets[j] if j < len(fr_bullets) else ""
+    open_mask = _open_mask(df, state_col, excluded)
 
-                # ✅ retour ligne avant la bulle (comme demandé)
-                en_final = (en_intro + ("\n" + "o " + en_b if en_b else "")).strip()
-                fr_final = (fr_intro + ("\n" + "o " + fr_b if fr_b else "")).strip()
+    # Filtre sur levels (normalisation trim pour éviter les soucis d'espaces)
+    rr_norm = df[residual_risk_level_col].astype(str).str.strip()
+    level_mask = rr_norm.isin({str(v).strip() for v in levels})
 
-                rows_to_write.append((verif_id, en_final, fr_final))
-        else:
-            # Pas de bulles -> Vx
-            verif_id = f"{cp_ref_clean}-V{v_num}"
-            rows_to_write.append((verif_id, en_text.strip(), fr_text.strip()))
+    scoped = df.loc[open_mask & level_mask, local_risk_ref_col]
+    if dropna_refs:
+        scoped = scoped.dropna()
 
-    # Ajouter exactement le bon nombre de lignes
-    for _ in range(len(rows_to_write)):
-        table.add_row()
+    scoped_norm = scoped.astype(str).str.strip()
+    return int(scoped_norm.nunique())
 
-    # Remplir les lignes
-    for idx, (verif_id, en_val, fr_val) in enumerate(rows_to_write):
-        row = table.rows[header_r + 1 + idx]
-        row.cells[0].text = verif_id
-        write_en_fr_in_cell(row.cells[1], en_val, fr_val)
-        row.cells[2].text = ""  # Result
-        row.cells[3].text = ""  # Evidence
+def write_metrics_to_excel(metrics: list[tuple[str, int]], output_path: Union[str, Path]) -> None:
+    df_out = pd.DataFrame(metrics, columns=["Indicator", "Value"])
+    df_out.to_excel(output_path, index=False, engine="openpyxl")
 
-    # Re-force : header + N lignes (supprime fantômes éventuels)
-    trim_table_to_row_count(table, header_r + 1 + len(rows_to_write))
+def main():
+    # ======== À ADAPTER =========
+    risk_cards_path = "risk_cards.xlsx"
+    risk_cards_sheet = 0  # ou "RiskCards"
+    output_path = "resultats_indicateurs.xlsx"
+    # ============================
+
+    metrics: list[tuple[str, int]] = []
+
+    # RSK_GAI_002
+    metrics.append((
+        "RSK_GAI_002",
+        RSK_GAI_002_count_open_risk_cards(
+            risk_cards_path=risk_cards_path,
+            sheet_name=risk_cards_sheet,
+            state_col="State",
+            local_risk_ref_col="Local risk reference",
+        ),
+    ))
+
+    # RSK_GAI_003
+    metrics.append((
+        "RSK_GAI_003",
+        RSK_GAI_003_count_open_major_extreme_risk_cards(
+            risk_cards_path=risk_cards_path,
+            sheet_name=risk_cards_sheet,
+            state_col="State",
+            local_risk_ref_col="Local risk reference",
+            residual_risk_level_col="Residual risk level",
+            included_levels={"3 - Major", "4 - Extreme"},
+        ),
+    ))
+
+    write_metrics_to_excel(metrics, output_path)
+    print(f"Fichier généré: {output_path}")
+
+if __name__ == "__main__":
+    main()
