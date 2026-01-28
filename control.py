@@ -5,116 +5,120 @@ from datetime import date
 
 EXCLUDED_STATES_OPEN = {"retired", "cancelled", "closed"}
 
-def _read_risk_cards(
-    risk_cards_path: Union[str, Path],
-    sheet_name: Union[str, int] = 0,
-) -> pd.DataFrame:
-    return pd.read_excel(risk_cards_path, sheet_name=sheet_name, engine="openpyxl")
+def _read_risk_cards(path: Union[str, Path], sheet_name: Union[str, int] = 0) -> pd.DataFrame:
+    return pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
 
 def _norm_series(s: pd.Series) -> pd.Series:
     return s.fillna("").astype(str).str.strip().str.lower()
 
-def _count_state_in_month(
-    df: pd.DataFrame,
-    state_col: str,
-    target_state: str,
-    date_col: str,
-    year: int,
-    month: int,
-) -> int:
-    """
-    Compte le nombre de lignes dont:
-    - state_col == target_state
-    - date_col est dans (year, month)
-    """
-    if state_col not in df.columns:
-        raise ValueError(f"Colonne '{state_col}' introuvable. Colonnes dispo: {list(df.columns)}")
-    if date_col not in df.columns:
-        raise ValueError(f"Colonne '{date_col}' introuvable. Colonnes dispo: {list(df.columns)}")
+def _unique_refs(df: pd.DataFrame, col: str) -> pd.Series:
+    return df[col].dropna().astype(str).str.strip()
 
-    state_norm = _norm_series(df[state_col])
-    mask_state = state_norm == target_state.strip().lower()
-
-    # Convertit la colonne date (Excel peut donner datetime/str/float)
-    d = pd.to_datetime(df[date_col], errors="coerce")
-    mask_month = (d.dt.year == year) & (d.dt.month == month)
-
-    return int((mask_state & mask_month).sum())
-
-def RSK_GAI_006_monthly_closed_retired(
+def RSK_GAI_002_count_open_risk_cards(
     risk_cards_path: Union[str, Path],
     sheet_name: Union[str, int] = 0,
-    state_col: str = "State (Evaluation Status)",
-    retired_state: str = "Retired",
-    retired_date_col: str = "Risk retirement date",
-    closed_state: str = "Closed",
-    closed_date_col: str = "Risk closure date",
-    year: Optional[int] = None,
-    month: Optional[int] = None,
+    state_col: str = "State",
+    local_risk_ref_col: str = "Local risk reference",
+    excluded_states: Optional[set[str]] = None,
 ) -> int:
-    """
-    RSK-GAI-006 — Nombre de monthly risk cards Closed/Retired.
-
-    Règle:
-    - Retired: compter les lignes avec State=Retired ET 'Risk retirement date' dans le mois courant.
-    - Closed:  compter les lignes avec State=Closed  ET 'Risk closure date'   dans le mois courant.
-    - Retourner la somme des deux.
-    """
+    excluded = {s.lower() for s in (excluded_states or EXCLUDED_STATES_OPEN)}
     df = _read_risk_cards(risk_cards_path, sheet_name)
 
-    if year is None or month is None:
-        today = date.today()
-        year = today.year
-        month = today.month
+    for c in (state_col, local_risk_ref_col):
+        if c not in df.columns:
+            raise ValueError(f"Colonne '{c}' introuvable. Colonnes dispo: {list(df.columns)}")
 
-    retired_count = _count_state_in_month(
-        df=df,
-        state_col=state_col,
-        target_state=retired_state,
-        date_col=retired_date_col,
-        year=year,
-        month=month,
-    )
+    open_mask = ~_norm_series(df[state_col]).isin(excluded)
+    return int(_unique_refs(df.loc[open_mask], local_risk_ref_col).nunique())
 
-    closed_count = _count_state_in_month(
-        df=df,
-        state_col=state_col,
-        target_state=closed_state,
-        date_col=closed_date_col,
-        year=year,
-        month=month,
-    )
+def RSK_GAI_007_count_non_validated_open_risk_cards(
+    risk_cards_path: Union[str, Path],
+    sheet_name: Union[str, int] = 0,
+    # périmètre "open"
+    state_col: str = "State",
+    local_risk_ref_col: str = "Local risk reference",
+    excluded_states_open: Optional[set[str]] = None,
+    # règles "validé"
+    status_col: str = "Status",
+    sub_state_col: str = "Sub-State",
+    managed_value: str = "Managed",
+    respond_value: str = "Respond",
+    implementation_value: str = "Implementation",
+) -> int:
+    """
+    RSK-GAI-007 — Nombre de risk cards OPEN non validées.
 
-    return retired_count + closed_count
+    Validé si :
+    - Status == Managed (peu importe Sub-State)
+    OU
+    - Status == Respond ET Sub-State == Implementation
+
+    Non validé = (Open distinct Local risk reference) - (Validé distinct Local risk reference) sur le même périmètre Open.
+    """
+    excluded = {s.lower() for s in (excluded_states_open or EXCLUDED_STATES_OPEN)}
+
+    df = _read_risk_cards(risk_cards_path, sheet_name)
+
+    required = [state_col, local_risk_ref_col, status_col, sub_state_col]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Colonnes manquantes: {missing}. Colonnes dispo: {list(df.columns)}")
+
+    # Scope OPEN (même règle que RSK-GAI-002)
+    open_mask = ~_norm_series(df[state_col]).isin(excluded)
+    df_open = df.loc[open_mask].copy()
+
+    # Total open (distinct Local risk reference)
+    open_refs = _unique_refs(df_open, local_risk_ref_col)
+    open_count = int(open_refs.nunique())
+
+    # Validés dans le scope open
+    status_norm = _norm_series(df_open[status_col])
+    sub_norm = _norm_series(df_open[sub_state_col])
+
+    managed_mask = status_norm == managed_value.strip().lower()
+    respond_impl_mask = (status_norm == respond_value.strip().lower()) & (sub_norm == implementation_value.strip().lower())
+    validated_mask = managed_mask | respond_impl_mask
+
+    validated_refs = _unique_refs(df_open.loc[validated_mask], local_risk_ref_col)
+    validated_count = int(validated_refs.nunique())
+
+    non_validated = open_count - validated_count
+    return max(0, int(non_validated))
 
 def write_metrics_to_excel(metrics: list[tuple[str, int]], output_path: Union[str, Path]) -> None:
-    df_out = pd.DataFrame(metrics, columns=["Indicator", "Value"])
-    df_out.to_excel(output_path, index=False, engine="openpyxl")
+    pd.DataFrame(metrics, columns=["Indicator", "Value"]).to_excel(output_path, index=False, engine="openpyxl")
 
 def main():
     # ======== À ADAPTER =========
     risk_cards_path = "risk_cards.xlsx"
     risk_cards_sheet = 0  # ou "RiskCards"
     output_path = "resultats_indicateurs.xlsx"
-
-    # Période "mois en cours" : si tu veux forcer Janvier 2026 par ex:
-    # year, month = 2026, 1
-    year, month = None, None
     # ============================
 
     metrics: list[tuple[str, int]] = []
 
-    # Exemple: on ne remet pas ici RSK_GAI_002/003 si tu les as déjà dans ton script
+    # RSK-GAI-002
     metrics.append((
-        "RSK-GAI-006",
-        RSK_GAI_006_monthly_closed_retired(
+        "RSK-GAI-002",
+        RSK_GAI_002_count_open_risk_cards(
             risk_cards_path=risk_cards_path,
             sheet_name=risk_cards_sheet,
-            state_col="State (Evaluation Status)",
-            retired_date_col="Risk retirement date",
-            closed_date_col="Risk closure date",
-            year=year,
-            month=month,
+            state_col="State",
+            local_risk_ref_col="Local risk reference",
+        ),
+    ))
+
+    # RSK-GAI-007
+    metrics.append((
+        "RSK-GAI-007",
+        RSK_GAI_007_count_non_validated_open_risk_cards(
+            risk_cards_path=risk_cards_path,
+            sheet_name=risk_cards_sheet,
+            state_col="State",
+            local_risk_ref_col="Local risk reference",
+            status_col="Status",          # adapte si le nom diffère dans ton fichier
+            sub_state_col="Sub-State",    # adapte si le nom diffère dans ton fichier
         ),
     ))
 
