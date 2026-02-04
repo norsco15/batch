@@ -1,62 +1,33 @@
-Voici un **résumé “RCSA Projet”** qui reprend **le même template** que ton exemple (structure + style), mais adapté au **périmètre Projet**.
+Slide RE00021 (PR00105 – Manage IT Change)
 
----
+« RE00021 : le risque est abandon, surcoûts ou retards sur un projet avec une composante IT.
+Le scénario : après validation budgétaire initiale, on peut avoir des coûts additionnels et/ou des délais liés à une mauvaise définition du scope ICT (ou changement de stratégie, planning de change, etc.).
 
-### Ci-dessous commentaire en résumé du RCSA Projet :
+Évolution de la note : l’inhérent est passé à 1 car l’incident historique qui existait est hors périmètre : on analyse sur les 10 dernières années et cet incident (2015) n’est plus retenu (impact client, pas BP2I).
 
-**A noter :**
-Suite aux données traitées lors de cette revue et des avis d’experts, les scénarios **2024** ont été **maintenus** sur le périmètre Projet.
-Le niveau de **risque résiduel** sur les risk events du périmètre ICT project est **faible à modéré** et **reste stable** par rapport à la dernière revue.
+Sur le reste : rien à signaler, contrôles compliant et process mature. »
 
----
+Slide RE00182 (PR00105 – Manage IT Change)
 
-## PROCESS PR00105 : Gérer le changement IT
+« RE00182 : le risque est une gouvernance/pilotage insuffisants sur les changes IT.
+Le scénario : manque de visibilité sur les risques et contrôles de change ICT, pouvant mener à des décisions mal informées et à des politiques/procédures insuffisantes, faute de supervision via comités.
 
-**Risk Event :**
+Évolution de la note : pas de changement à signaler.
+Contrôles compliants et process mature. »
 
-* **RE00021** – Abandon, coûts additionnels ou retards dans un projet avec une composante IT
-* **RE00182** – Gouvernance / pilotage insuffisants des changes IT (manque de visibilité sur risques & contrôles)
-* **RE00022** – Solution inadaptée / non conforme au besoin métier (mismatch besoin / contraintes techniques)
+Slide RE00022 (PR00105 – Manage IT Change)
 
----
+« RE00022 : le risque est une solution inadaptée / non alignée avec le besoin métier.
+Le scénario : retard ou abandon (de solution ou de projet) suite à un mismatch avec le besoin business ou à la non prise en compte des contraintes techniques.
 
-## PROCESS PR00107 : Gérer les livraisons et les services IT
+Évolution de la note : l’inhérent est passé à 1 pour la même raison : l’incident historique qui tirait la note est hors scope car au-delà des 10 ans (incident 2015).
 
-**Risk Event :**
+Sur le reste : rien à signaler, contrôles compliant et process mature. »
 
-* **RE00171** – Architecture / flux / modèles / dictionnaires de données mal conçus ou mal gérés (risque d’intégrité data)
+Slide RE00171 (PR00107 – Manage IT Delivery and Services)
 
----
+« RE00171 : risque lié à la data : architecture / data flows / data models / data dictionaries mal conçus ou mal gérés, avec un risque de perte d’intégrité et de capacité à traiter/comparer la donnée.
+Le scénario : data architecture et référentiels data insuffisamment maîtrisés, pouvant dégrader l’intégrité.
 
-### Inhérent :
-
-Très peu de changements observés sur les risques inhérents des triplets « Project ».
-**Évolution notoire :** pour **RE00021** et **RE00022**, l’**incident historique** (2015) n’est **plus retenu** car **hors scope des 10 dernières années**, ce qui contribue à une **amélioration** de l’inhérent (note à **1**).
-Pour **RE00182**, pas d’évolution significative.
-Pour **RE00171 (data)**, la note **reste stable à 2** (périmètre spécifique data, suivi par l’équipe dédiée).
-
----
-
-## Évaluation du dispositif de contrôle :
-
-Le dispositif de contrôle sur le périmètre Projet est **globalement mature** :
-
-* Contrôles **compliants** sur les activités de project management / delivery
-* Indicateurs **globalement au vert** et suivis (qualité / délais / delivery)
-* Conformité ITG : **niveau élevé** sur les axes de gouvernance / transformation (incluant PPM/PRI)
-* **Pas de nouvelle recommandation 2025** sur le périmètre projet
-
-**NB :** Concernant **RE00171 (data)**, des **plans d’action** sont en cours afin de renforcer le dispositif (amélioration progressive des pratiques/process data) ; le détail est porté par le référent data.
-
----
-
-## A retenir :
-
-* **PR00105 – RE00021 :** amélioration de l’inhérent (incident historique hors scope 10 ans), **risque résiduel stable**
-* **PR00105 – RE00182 :** pas de changement notable, **risque résiduel stable**
-* **PR00105 – RE00022 :** amélioration de l’inhérent (incident historique hors scope 10 ans), **risque résiduel stable**
-* **PR00107 – RE00171 :** périmètre data, **risque résiduel stable** (plans d’action en cours sur le volet data)
-
----
-
-Si tu veux, je peux te le **réécrire en version encore plus “copier-coller Word”** (mêmes retours à la ligne, même ponctuation, même niveau de détail que ton doc).
+Note : c’est un triplet particulier “data” ; la note reste stable à 2 comme l’an dernier.
+Ismaila détaillera la partie data et les éléments de fond. »
