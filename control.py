@@ -1,157 +1,440 @@
+import re
+import calendar
+from datetime import datetime
 import pandas as pd
-from typing import Union, Optional, Tuple
-from pathlib import Path
-from datetime import date
 
-EXCLUDED_OPEN_STATES = {"retired", "cancelled", "closed"}
 
-def _read_excel(path: Union[str, Path], sheet_name: Union[str, int] = 0) -> pd.DataFrame:
-    return pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
+# =========================
+# Utils
+# =========================
+def norm_str(x) -> str:
+    """Normalize to stripped string; empty string if NaN/None."""
+    if pd.isna(x):
+        return ""
+    return str(x).strip()
 
-def _norm(s: pd.Series) -> pd.Series:
-    return s.fillna("").astype(str).str.strip().str.lower()
+def is_blank(x) -> bool:
+    return norm_str(x) == ""
 
-def _to_dt(s: pd.Series) -> pd.Series:
-    return pd.to_datetime(s, errors="coerce")
+def first_digit_1_to_4(s: str):
+    """Extract first digit 1..4 found in the string. Return int or None."""
+    s = norm_str(s)
+    m = re.search(r"[1-4]", s)
+    return int(m.group(0)) if m else None
 
-def _first_day(year: int, month: int) -> pd.Timestamp:
-    return pd.Timestamp(year=year, month=month, day=1)
-
-def _add_months(ts: pd.Timestamp, months: int) -> pd.Timestamp:
-    return ts + pd.DateOffset(months=months)
-
-def _validated_mask(df: pd.DataFrame, status_col: str, sub_state_col: str) -> pd.Series:
-    st = _norm(df[status_col])
-    sub = _norm(df[sub_state_col])
-    return (st == "managed") | ((st == "respond") & (sub == "implementation"))
-
-def _open_mask(df: pd.DataFrame, state_col: str, excluded_open_states: Optional[set[str]] = None) -> pd.Series:
-    excluded = {x.lower() for x in (excluded_open_states or EXCLUDED_OPEN_STATES)}
-    return ~_norm(df[state_col]).isin(excluded)
-
-def _riskid_to_localrefs(df: pd.DataFrame, risk_id_col: str, local_ref_col: str) -> pd.DataFrame:
-    tmp = df[[risk_id_col, local_ref_col]].copy()
-    tmp[risk_id_col] = tmp[risk_id_col].astype(str).str.strip()
-    tmp[local_ref_col] = tmp[local_ref_col].astype(str).str.strip()
-
-    mp = (
-        tmp.dropna(subset=[risk_id_col])
-           .groupby(risk_id_col)[local_ref_col]
-           .apply(lambda x: "; ".join(sorted({v for v in x if v and v.lower() != "nan"})))
-           .reset_index()
-           .rename(columns={local_ref_col: "Local risk reference(s)"})
-    )
-    return mp
-
-def RSK_GPI_006_percent_monthly_validated_with_overdue_and_due_next_2m_over_open_with_details(
-    risk_cards_path: Union[str, Path],
-    ipt_path: Union[str, Path],
-    risk_cards_sheet: Union[str, int] = 0,
-    ipt_sheet: Union[str, int] = 0,
-    # period = month you report on (e.g. January 2026)
-    period_year: Optional[int] = None,
-    period_month: Optional[int] = None,
-    # risk cards columns
-    risk_id_col: str = "Risk ID",
-    local_ref_col: str = "Local risk reference",
-    state_col: str = "State",
-    status_col: str = "Status",
-    sub_state_col: str = "Sub-State",
-    excluded_open_states: Optional[set[str]] = None,
-    # ipt columns
-    ipt_risk_id_col: str = "Risk ID",
-    planned_end_date_col: str = "Planned end date",
-) -> Tuple[float, pd.DataFrame]:
+def parse_date_any(x):
     """
-    RSK-GPI-006 (%):
-      ( # Risk IDs VALIDATED (scope OPEN) having:
-          - >=1 IPT overdue as of end of period month (planned_end < first_day(next_month))
-          - AND >=1 IPT finishing in the next 2 months (planned_end in [first_day(next_month), first_day(period_month+3)) )
-        ) / (# Risk IDs OPEN) * 100
-
-    Returns:
-      percent (0..100) and details DataFrame with:
-        Risk ID | Local risk reference(s) | Overdue_IPT_Count | Due_Next2M_IPT_Count
+    Parse date from Excel cell:
+    - if it's already datetime/date -> ok
+    - if it's string 'yyyy-MM-dd' -> parse
+    - else -> try pandas parser
+    Return pandas.Timestamp or None.
     """
-    df_risk = _read_excel(risk_cards_path, risk_cards_sheet)
-    df_ipt = _read_excel(ipt_path, ipt_sheet)
+    if pd.isna(x):
+        return None
+    if isinstance(x, (datetime, pd.Timestamp)):
+        return pd.Timestamp(x).normalize()
+    s = norm_str(x)
+    if not s:
+        return None
+    # strict first: yyyy-MM-dd
+    try:
+        return pd.to_datetime(s, format="%Y-%m-%d", errors="raise").normalize()
+    except Exception:
+        # fallback (Excel weird formats)
+        try:
+            return pd.to_datetime(s, errors="coerce").normalize()
+        except Exception:
+            return None
 
-    # default period = "previous month" relative to today (useful if you run early next month)
-    if period_year is None or period_month is None:
-        today = date.today()
-        # previous month
-        if today.month == 1:
-            period_year, period_month = today.year - 1, 12
-        else:
-            period_year, period_month = today.year, today.month - 1
+def last_day_of_month(ts: pd.Timestamp) -> int:
+    return calendar.monthrange(ts.year, ts.month)[1]
 
-    required_risk = [risk_id_col, local_ref_col, state_col, status_col, sub_state_col]
-    missing = [c for c in required_risk if c not in df_risk.columns]
+
+# =========================
+# Reporting
+# =========================
+def add_failure(failures, rule_id, severity, row_idx, row_key, column, value, recommendation):
+    failures.append({
+        "rule_id": rule_id,
+        "severity": severity,
+        "row_index": row_idx,
+        "row_key": row_key,          # helpful identifier (Risk ID or Local Risk Reference)
+        "column": column,
+        "value": value,
+        "recommendation": recommendation
+    })
+
+def choose_row_key(row):
+    # Prefer Risk ID, else Local Risk Reference, else empty
+    rid = norm_str(row.get("Risk ID", ""))
+    rlr = norm_str(row.get("Local Risk Reference", ""))
+    return rid or rlr or ""
+
+
+# =========================
+# Rules
+# =========================
+def run_quality_checks(df: pd.DataFrame):
+    failures = []
+
+    # Safety: ensure expected columns exist (we'll still run what we can)
+    expected_cols = [
+        "Risk ID",
+        "Local Risk Reference",
+        "Title",
+        "Residual risk level",
+        "Remediation Count",
+        "Response",
+        "Business organization owning the risk",
+        "Business entity (Bus. Org. owning the risk)",
+        "Business entity (IT Org. managing the risk)",
+        "IT organization managing the risk",
+        "Risk Owner/Sponsor",
+        "Risk Category",
+        "Topic Sub-Category",
+        "Risk statement level 3",
+        "Recorded date",
+        "Identification date",
+        "Latest review comments",
+        "Description",
+        "Target residual risk level",
+        "Next review date",
+    ]
+    missing = [c for c in expected_cols if c not in df.columns]
     if missing:
-        raise ValueError(f"RSK-GPI-006 missing risk columns: {missing}. Found: {list(df_risk.columns)}")
+        # global "schema" failures: one per missing column (not per row)
+        for c in missing:
+            add_failure(
+                failures,
+                rule_id="SCHEMA_MISSING_COLUMN",
+                severity="BLOCKER",
+                row_idx=None,
+                row_key="",
+                column=c,
+                value="(missing column)",
+                recommendation=f"Ajouter la colonne '{c}' dans l'extraction ou corriger le nom exact de la colonne."
+            )
 
-    required_ipt = [ipt_risk_id_col, planned_end_date_col]
-    missing = [c for c in required_ipt if c not in df_ipt.columns]
-    if missing:
-        raise ValueError(f"RSK-GPI-006 missing IPT columns: {missing}. Found: {list(df_ipt.columns)}")
+    # Constants / patterns
+    BP2I_MAIN = "BP2I - BNP PARIBAS PARTNERS FOR INNOVATION"
 
-    # Time boundaries based on PERIOD month
-    period_start = _first_day(period_year, period_month)
-    next_month_start = _add_months(period_start, 1)
-    month_plus3_start = _add_months(period_start, 3)  # exclusive upper bound (covers next 2 months)
+    # Business org owning the risk:
+    # - either exactly BP2I_MAIN
+    # - OR starts with "BP2I " then next token endswith "A"
+    # e.g. "BP2I CI22A - EMEA RISK" ok, "BP2I CI22B - ..." not ok
+    business_org_regex = re.compile(r"^BP2I\s+(\S+)", re.IGNORECASE)
 
-    # Denominator: OPEN (Risk IDs)
-    om = _open_mask(df_risk, state_col=state_col, excluded_open_states=excluded_open_states)
-    open_ids = set(df_risk.loc[om, risk_id_col].dropna().astype(str).str.strip().tolist())
-    denom = len(open_ids)
-    if denom == 0:
-        empty = pd.DataFrame(columns=[risk_id_col, "Local risk reference(s)", "Overdue_IPT_Count", "Due_Next2M_IPT_Count"])
-        return 0.0, empty
+    # IT org managing the risk must be either "BP2I CI22B ..." or "BP2I CI23B ..."
+    it_org_regex = re.compile(r"^BP2I\s+CI(22B|23B)\b", re.IGNORECASE)
 
-    # Validated within OPEN
-    df_open = df_risk.loc[om].copy()
-    vm = _validated_mask(df_open, status_col=status_col, sub_state_col=sub_state_col)
-    validated_open_ids = set(df_open.loc[vm, risk_id_col].dropna().astype(str).str.strip().tolist())
-
-    # IPT windows
-    planned_end = _to_dt(df_ipt[planned_end_date_col])
-    ipt_risk_ids = df_ipt[ipt_risk_id_col].dropna().astype(str).str.strip()
-
-    overdue_mask = planned_end.notna() & (planned_end < next_month_start)
-    due_next2m_mask = planned_end.notna() & (planned_end >= next_month_start) & (planned_end < month_plus3_start)
-
-    # Count IPT per Risk ID for each mask
-    overdue_counts = (
-        pd.DataFrame({risk_id_col: ipt_risk_ids[overdue_mask].values})
-        .groupby(risk_id_col).size().reset_index(name="Overdue_IPT_Count")
-    )
-    due_counts = (
-        pd.DataFrame({risk_id_col: ipt_risk_ids[due_next2m_mask].values})
-        .groupby(risk_id_col).size().reset_index(name="Due_Next2M_IPT_Count")
+    # Description must contain those sections in order
+    # "Context ... Vulnerabilities ... Threat ... Impacted Assets ... Annual Review ..."
+    desc_sections = ["Context", "Vulnerabilities", "Threat", "Impacted Assets", "Annual Review"]
+    desc_pattern = re.compile(
+        r"Context[\s\S]*Vulnerabilities[\s\S]*Threat[\s\S]*Impacted Assets[\s\S]*Annual Review",
+        re.IGNORECASE
     )
 
-    # Candidate Risk IDs = validated_open_ids that appear in BOTH overdue and due_next2m sets
-    overdue_ids = set(overdue_counts[risk_id_col].tolist())
-    due_ids = set(due_counts[risk_id_col].tolist())
+    # Iterate rows
+    for idx, row in df.iterrows():
+        row_key = choose_row_key(row)
 
-    numerator_ids = sorted(validated_open_ids.intersection(overdue_ids).intersection(due_ids))
-    numerator = len(numerator_ids)
+        # 1) Risk ID -> not blank + starts RK
+        col = "Risk ID"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "RISK_ID_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            "Renseigner un Risk ID non vide (ex: RKxxxx).")
+            elif not v.startswith("RK"):
+                add_failure(failures, "RISK_ID_STARTS_RK", "BLOCKER", idx, row_key, col, v,
+                            "Le Risk ID doit commencer par 'RK' (ex: RK12345).")
 
-    percent = float((numerator / denom) * 100.0)
+        # 2) Local Risk Reference -> not blank + starts RL
+        col = "Local Risk Reference"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "LOCAL_RISK_REF_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            "Renseigner une Local Risk Reference non vide (ex: RLxxxx).")
+            elif not v.startswith("RL"):
+                add_failure(failures, "LOCAL_RISK_REF_STARTS_RL", "BLOCKER", idx, row_key, col, v,
+                            "La Local Risk Reference doit commencer par 'RL' (ex: RL123).")
 
-    # Details
-    df_num_risk = df_risk[df_risk[risk_id_col].astype(str).str.strip().isin(numerator_ids)][[risk_id_col, local_ref_col]].copy()
-    mp = _riskid_to_localrefs(df_num_risk, risk_id_col, local_ref_col)
+        # 3) Title -> not blank + starts with BP2I-RL{LocalRiskRef}
+        col = "Title"
+        if col in df.columns:
+            title = norm_str(row[col])
+            lrr = norm_str(row.get("Local Risk Reference", ""))
+            if not title:
+                add_failure(failures, "TITLE_NOT_BLANK", "BLOCKER", idx, row_key, col, title,
+                            "Renseigner un Title non vide.")
+            else:
+                if lrr:
+                    expected_prefix = f"BP2I-{lrr}"
+                    if not title.startswith(expected_prefix):
+                        add_failure(
+                            failures, "TITLE_PREFIX_BP2I_RL", "MAJOR", idx, row_key, col, title,
+                            f"Le Title doit commencer par '{expected_prefix}...' (ex: {expected_prefix} - <suite>)."
+                        )
+                else:
+                    # Local risk ref empty already flagged; still provide guidance
+                    if not title.startswith("BP2I-RL"):
+                        add_failure(
+                            failures, "TITLE_STARTS_BP2I_RL", "MAJOR", idx, row_key, col, title,
+                            "Le Title doit commencer par 'BP2I-RL...' (et idéalement BP2I-{Local Risk Reference})."
+                        )
 
-    details = (
-        mp.merge(overdue_counts, on=risk_id_col, how="left")
-          .merge(due_counts, on=risk_id_col, how="left")
-          .fillna({"Overdue_IPT_Count": 0, "Due_Next2M_IPT_Count": 0})
-    )
-    details["Overdue_IPT_Count"] = details["Overdue_IPT_Count"].astype(int)
-    details["Due_Next2M_IPT_Count"] = details["Due_Next2M_IPT_Count"].astype(int)
+        # 4) Residual risk level -> not blank
+        col = "Residual risk level"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "RESIDUAL_RISK_LEVEL_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            "Renseigner le Residual risk level (ex: 1 - ..., 2 - ...).")
 
-    # keep only numerator ids (safety)
-    details = details[details[risk_id_col].isin(numerator_ids)].copy()
+        # 5) Remediation Count -> if Response == 'Accept' then must be 0
+        col_rc = "Remediation Count"
+        col_resp = "Response"
+        if col_rc in df.columns and col_resp in df.columns:
+            resp = norm_str(row[col_resp])
+            rc_raw = row[col_rc]
+            rc_str = norm_str(rc_raw)
+            # parse remediation count numeric if possible
+            rc_val = None
+            if rc_str:
+                try:
+                    rc_val = int(float(rc_str))
+                except Exception:
+                    rc_val = None
 
-    return percent, details
+            if resp == "Accept":
+                if rc_val is None:
+                    add_failure(
+                        failures, "REMEDIATION_COUNT_NUMERIC", "MAJOR", idx, row_key, col_rc, rc_str,
+                        "Remediation Count doit être numérique; pour Response='Accept', il doit être 0."
+                    )
+                elif rc_val != 0:
+                    add_failure(
+                        failures, "REMEDIATION_COUNT_ACCEPT_ZERO", "MAJOR", idx, row_key, col_rc, rc_val,
+                        "Si Response='Accept', Remediation Count doit être 0. Mettre 0 ou corriger la Response."
+                    )
+
+        # 6) Business organization owning the risk -> BP2I_MAIN OR BP2I <tokenEndingWithA> ...
+        col = "Business organization owning the risk"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "BUS_ORG_OWNING_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            "Renseigner la Business organization owning the risk.")
+            else:
+                if v == BP2I_MAIN:
+                    pass
+                else:
+                    m = business_org_regex.match(v)
+                    if not m:
+                        add_failure(
+                            failures, "BUS_ORG_OWNING_FORMAT", "MAJOR", idx, row_key, col, v,
+                            "Doit être 'BP2I - BNP PARIBAS PARTNERS FOR INNOVATION' OU commencer par 'BP2I <codeA> ...' (le mot après BP2I doit finir par 'A')."
+                        )
+                    else:
+                        token = m.group(1)
+                        if not token.upper().endswith("A"):
+                            add_failure(
+                                failures, "BUS_ORG_OWNING_TOKEN_ENDS_A", "MAJOR", idx, row_key, col, v,
+                                "Le mot suivant 'BP2I' doit finir par 'A' (ex: BP2I CI22A - ...)."
+                            )
+
+        # 7) Business entity (Bus. Org. owning the risk) -> not blank + equals BP2I_MAIN
+        col = "Business entity (Bus. Org. owning the risk)"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "BUS_ENTITY_OWNING_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            f"Renseigner '{BP2I_MAIN}'.")
+            elif v != BP2I_MAIN:
+                add_failure(failures, "BUS_ENTITY_OWNING_EQUALS_BP2I", "MAJOR", idx, row_key, col, v,
+                            f"Mettre exactement '{BP2I_MAIN}'.")
+
+        # 8) Business entity (IT Org. managing the risk) -> not blank + equals BP2I_MAIN
+        col = "Business entity (IT Org. managing the risk)"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "BUS_ENTITY_IT_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            f"Renseigner '{BP2I_MAIN}'.")
+            elif v != BP2I_MAIN:
+                add_failure(failures, "BUS_ENTITY_IT_EQUALS_BP2I", "MAJOR", idx, row_key, col, v,
+                            f"Mettre exactement '{BP2I_MAIN}'.")
+
+        # 9) IT organization managing the risk -> not blank + starts BP2I CI22B... or BP2I CI23B...
+        col = "IT organization managing the risk"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "IT_ORG_MANAGING_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            "Renseigner IT organization managing the risk (ex: BP2I CI22B ... ou BP2I CI23B ...).")
+            elif not it_org_regex.match(v):
+                add_failure(
+                    failures, "IT_ORG_MANAGING_ALLOWED_PREFIX", "MAJOR", idx, row_key, col, v,
+                    "Doit commencer par 'BP2I CI22B' ou 'BP2I CI23B' (puis le reste peut suivre)."
+                )
+
+        # 10) Risk Owner/Sponsor -> not blank
+        col = "Risk Owner/Sponsor"
+        if col in df.columns and is_blank(row[col]):
+            add_failure(failures, "RISK_OWNER_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
+                        "Renseigner le Risk Owner/Sponsor.")
+
+        # 11) Risk Category -> not blank
+        col = "Risk Category"
+        if col in df.columns and is_blank(row[col]):
+            add_failure(failures, "RISK_CATEGORY_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
+                        "Renseigner le Risk Category.")
+
+        # 12) Topic Sub-Category -> not blank
+        col = "Topic Sub-Category"
+        if col in df.columns and is_blank(row[col]):
+            add_failure(failures, "TOPIC_SUBCATEGORY_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
+                        "Renseigner le Topic Sub-Category.")
+
+        # 13) Risk statement level 3 -> not blank
+        col = "Risk statement level 3"
+        if col in df.columns and is_blank(row[col]):
+            add_failure(failures, "RISK_STATEMENT_L3_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
+                        "Renseigner le Risk statement level 3.")
+
+        # 14) Recorded date -> not blank
+        col = "Recorded date"
+        if col in df.columns:
+            dt = parse_date_any(row[col])
+            if dt is None:
+                add_failure(failures, "RECORDED_DATE_NOT_BLANK_OR_VALID", "BLOCKER", idx, row_key, col, norm_str(row[col]),
+                            "Renseigner une date valide pour Recorded date.")
+
+        # 15) Identification date -> not blank
+        col = "Identification date"
+        if col in df.columns:
+            dt = parse_date_any(row[col])
+            if dt is None:
+                add_failure(failures, "IDENTIFICATION_DATE_NOT_BLANK_OR_VALID", "BLOCKER", idx, row_key, col, norm_str(row[col]),
+                            "Renseigner une date valide pour Identification date.")
+
+        # 16) Latest review comments -> not blank
+        col = "Latest review comments"
+        if col in df.columns and is_blank(row[col]):
+            add_failure(failures, "LATEST_REVIEW_COMMENTS_NOT_BLANK", "MAJOR", idx, row_key, col, norm_str(row[col]),
+                        "Renseigner Latest review comments (commentaire de revue).")
+
+        # 17) Description -> not blank + contains sections in order
+        col = "Description"
+        if col in df.columns:
+            v = norm_str(row[col])
+            if not v:
+                add_failure(failures, "DESCRIPTION_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
+                            "Renseigner la Description.")
+            else:
+                if not desc_pattern.search(v):
+                    add_failure(
+                        failures, "DESCRIPTION_SECTION_PATTERN", "MAJOR", idx, row_key, col, v[:200] + ("..." if len(v) > 200 else ""),
+                        "La Description doit contenir, dans l’ordre : 'Context', 'Vulnerabilities', 'Threat', 'Impacted Assets', 'Annual Review'. (Même si le texte entre sections est libre.)"
+                    )
+
+        # 18) Target residual risk level -> not blank + if Response == Mitigate then target < residual
+        col_target = "Target residual risk level"
+        col_resid = "Residual risk level"
+        col_resp = "Response"
+        if col_target in df.columns:
+            target = norm_str(row[col_target])
+            if not target:
+                add_failure(failures, "TARGET_RESIDUAL_NOT_BLANK", "BLOCKER", idx, row_key, col_target, target,
+                            "Renseigner le Target residual risk level.")
+            else:
+                resp = norm_str(row.get(col_resp, ""))
+                if resp == "Mitigate" and col_resid in df.columns:
+                    resid = norm_str(row[col_resid])
+                    target_num = first_digit_1_to_4(target)
+                    resid_num = first_digit_1_to_4(resid)
+                    if target_num is None or resid_num is None:
+                        add_failure(
+                            failures, "TARGET_RESIDUAL_PARSE_DIGIT", "MAJOR", idx, row_key, col_target, target,
+                            "Pour Response='Mitigate', Target residual risk level et Residual risk level doivent contenir un chiffre 1 à 4 pour comparaison."
+                        )
+                    else:
+                        if not (target_num < resid_num):
+                            add_failure(
+                                failures, "TARGET_RESIDUAL_STRICTLY_LOWER_WHEN_MITIGATE", "MAJOR", idx, row_key, col_target, target,
+                                f"Pour Response='Mitigate', le Target residual risk level ({target_num}) doit être strictement inférieur au Residual risk level ({resid_num})."
+                            )
+
+        # 19) Next review date -> must be last day of month + format yyyy-MM-dd (we validate as date + last day)
+        col = "Next review date"
+        if col in df.columns:
+            raw = row[col]
+            dt = parse_date_any(raw)
+            if dt is None:
+                add_failure(failures, "NEXT_REVIEW_DATE_NOT_BLANK_OR_VALID", "MAJOR", idx, row_key, col, norm_str(raw),
+                            "Renseigner Next review date au format 'yyyy-MM-dd' (date valide).")
+            else:
+                last_day = last_day_of_month(dt)
+                if dt.day != last_day:
+                    add_failure(
+                        failures, "NEXT_REVIEW_DATE_LAST_DAY_OF_MONTH", "MAJOR", idx, row_key, col, dt.strftime("%Y-%m-%d"),
+                        f"La Next review date doit être le dernier jour du mois. Exemple pour {dt.strftime('%Y-%m')}: {dt.year}-{dt.month:02d}-{last_day:02d}."
+                    )
+
+    failures_df = pd.DataFrame(failures)
+
+    # Summary and stats
+    total_rows = len(df)
+    total_failures = len(failures_df)
+
+    if total_rows == 0:
+        conformity = 100.0
+    else:
+        # Not a perfect "compliance %" (needs denominator = nb rules * rows), but still useful
+        conformity = None
+
+    rule_stats = (
+        failures_df.groupby(["rule_id", "severity"], dropna=False)
+        .size()
+        .reset_index(name="failures_count")
+        .sort_values(["severity", "failures_count"], ascending=[True, False])
+    ) if not failures_df.empty else pd.DataFrame(columns=["rule_id", "severity", "failures_count"])
+
+    summary = pd.DataFrame([{
+        "rows_analyzed": total_rows,
+        "failures_total": total_failures,
+        "distinct_rules_failed": failures_df["rule_id"].nunique() if not failures_df.empty else 0,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }])
+
+    return summary, failures_df, rule_stats
+
+
+def generate_report(input_xlsx_path: str, output_xlsx_path: str, sheet_name=None):
+    # Read excel
+    df = pd.read_excel(input_xlsx_path, sheet_name=sheet_name)
+
+    summary, failures_df, rule_stats = run_quality_checks(df)
+
+    # Add some helpful ordering
+    if not failures_df.empty:
+        failures_df = failures_df.sort_values(["severity", "rule_id", "row_index"], ascending=[True, True, True])
+
+    with pd.ExcelWriter(output_xlsx_path, engine="openpyxl") as writer:
+        summary.to_excel(writer, index=False, sheet_name="Summary")
+        rule_stats.to_excel(writer, index=False, sheet_name="Rule_stats")
+        failures_df.to_excel(writer, index=False, sheet_name="Failures")
+
+    print(f"✅ Report generated: {output_xlsx_path}")
+
+
+if __name__ == "__main__":
+    # === A MODIFIER ===
+    INPUT_FILE = "risk_cards.xlsx"              # ton fichier ServiceNow
+    OUTPUT_FILE = "risk_cards_quality_report.xlsx"
+
+    # sheet_name=None -> première feuille; sinon mettre le nom exact
+    generate_report(INPUT_FILE, OUTPUT_FILE, sheet_name=None)
