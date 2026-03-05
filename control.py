@@ -1,440 +1,345 @@
-import re
-import calendar
-from datetime import datetime
-import pandas as pd
-
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string as col_idx
+from datetime import datetime, date
+from typing import Any, Optional, Set
 
 # =========================
-# Utils
+# CONFIG
 # =========================
-def norm_str(x) -> str:
-    """Normalize to stripped string; empty string if NaN/None."""
-    if pd.isna(x):
-        return ""
-    return str(x).strip()
+SHEET_DEST = "ITG0080-CHG-RUL002-REQ001-STD1"
+SHEET_CHG  = "Sample of changes"
+SHEET_TASK = "List of tasks"
 
-def is_blank(x) -> bool:
-    return norm_str(x) == ""
+HEADER_ROW = 1
+DATA_START_ROW = 2
+MAX_ROWS = 40  # tu peux changer si besoin
 
-def first_digit_1_to_4(s: str):
-    """Extract first digit 1..4 found in the string. Return int or None."""
-    s = norm_str(s)
-    m = re.search(r"[1-4]", s)
-    return int(m.group(0)) if m else None
+TEXT_ALL_ELEMENTS = "All elements required are in [CHG][BP2I][Audit][RCG] list of tasks (40 SAMPLES)"
 
-def parse_date_any(x):
-    """
-    Parse date from Excel cell:
-    - if it's already datetime/date -> ok
-    - if it's string 'yyyy-MM-dd' -> parse
-    - else -> try pandas parser
-    Return pandas.Timestamp or None.
-    """
-    if pd.isna(x):
+# =========================
+# Helpers
+# =========================
+def cell(ws, col_letter: str, row: int):
+    return ws.cell(row=row, column=col_idx(col_letter))
+
+def getv(ws, col_letter: str, row: int):
+    return cell(ws, col_letter, row).value
+
+def setv(ws, col_letter: str, row: int, value):
+    cell(ws, col_letter, row).value = value
+
+def is_empty(v: Any) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, str) and v.strip() == "":
+        return True
+    return False
+
+def note_0_if_filled_1_if_empty(v: Any) -> int:
+    return 0 if not is_empty(v) else 1
+
+def normalize_str(v: Any) -> str:
+    return "" if is_empty(v) else str(v).strip()
+
+def normalize_lower(v: Any) -> str:
+    return normalize_str(v).lower()
+
+def try_number(v: Any) -> Optional[float]:
+    """Try to convert to float if possible."""
+    if is_empty(v):
         return None
-    if isinstance(x, (datetime, pd.Timestamp)):
-        return pd.Timestamp(x).normalize()
-    s = norm_str(x)
-    if not s:
-        return None
-    # strict first: yyyy-MM-dd
+    if isinstance(v, (int, float)):
+        return float(v)
     try:
-        return pd.to_datetime(s, format="%Y-%m-%d", errors="raise").normalize()
+        return float(str(v).replace(",", ".").strip())
     except Exception:
-        # fallback (Excel weird formats)
-        try:
-            return pd.to_datetime(s, errors="coerce").normalize()
-        except Exception:
-            return None
+        return None
 
-def last_day_of_month(ts: pd.Timestamp) -> int:
-    return calendar.monthrange(ts.year, ts.month)[1]
+def diff_excel(a: Any, b: Any) -> Optional[float]:
+    """
+    Compute (a - b).
+    - If a,b are datetime/date => returns diff in days (float)
+    - If numeric => returns numeric difference
+    - Else None
+    """
+    if is_empty(a) or is_empty(b):
+        return None
 
+    # dates / datetimes
+    if isinstance(a, (datetime, date)) and isinstance(b, (datetime, date)):
+        da = a if isinstance(a, datetime) else datetime.combine(a, datetime.min.time())
+        db = b if isinstance(b, datetime) else datetime.combine(b, datetime.min.time())
+        return (da - db).total_seconds() / 86400.0
+
+    # numbers
+    na = try_number(a)
+    nb = try_number(b)
+    if na is not None and nb is not None:
+        return na - nb
+
+    return None
+
+def join_non_empty(values, sep: str) -> str:
+    parts = [normalize_str(v) for v in values if not is_empty(v)]
+    return sep.join(parts)
+
+def build_bad_changes_from_tasks(ws_tasks) -> Set[str]:
+    """
+    According to your rule:
+    - Look at List of tasks column S
+    - If any task has value 'Unsuccessful' (case-insensitive), take its change ID from column A
+    """
+    bad = set()
+    # Iterate rows until a long stretch of empties in column A (simple stop condition)
+    empty_streak = 0
+    r = DATA_START_ROW
+    while True:
+        chg_id = getv(ws_tasks, "A", r)
+        if is_empty(chg_id):
+            empty_streak += 1
+            if empty_streak >= 20:
+                break
+            r += 1
+            continue
+        empty_streak = 0
+
+        status = getv(ws_tasks, "S", r)
+        if normalize_lower(status) == "unsuccessful":
+            bad.add(normalize_str(chg_id))
+        r += 1
+    return bad
 
 # =========================
-# Reporting
+# Main
 # =========================
-def add_failure(failures, rule_id, severity, row_idx, row_key, column, value, recommendation):
-    failures.append({
-        "rule_id": rule_id,
-        "severity": severity,
-        "row_index": row_idx,
-        "row_key": row_key,          # helpful identifier (Risk ID or Local Risk Reference)
-        "column": column,
-        "value": value,
-        "recommendation": recommendation
-    })
+def run_fill(control_xlsx_path: str, output_xlsx_path: str):
+    wb = load_workbook(control_xlsx_path)
+    ws_dest = wb[SHEET_DEST]
+    ws_chg  = wb[SHEET_CHG]
+    ws_task = wb[SHEET_TASK]
 
-def choose_row_key(row):
-    # Prefer Risk ID, else Local Risk Reference, else empty
-    rid = norm_str(row.get("Risk ID", ""))
-    rlr = norm_str(row.get("Local Risk Reference", ""))
-    return rid or rlr or ""
+    # Precompute: changes that have at least one unsuccessful task
+    bad_changes = build_bad_changes_from_tasks(ws_task)
 
-
-# =========================
-# Rules
-# =========================
-def run_quality_checks(df: pd.DataFrame):
-    failures = []
-
-    # Safety: ensure expected columns exist (we'll still run what we can)
-    expected_cols = [
-        "Risk ID",
-        "Local Risk Reference",
-        "Title",
-        "Residual risk level",
-        "Remediation Count",
-        "Response",
-        "Business organization owning the risk",
-        "Business entity (Bus. Org. owning the risk)",
-        "Business entity (IT Org. managing the risk)",
-        "IT organization managing the risk",
-        "Risk Owner/Sponsor",
-        "Risk Category",
-        "Topic Sub-Category",
-        "Risk statement level 3",
-        "Recorded date",
-        "Identification date",
-        "Latest review comments",
-        "Description",
-        "Target residual risk level",
-        "Next review date",
+    # Define which DEST columns are "note columns" for BP sum
+    # (On prend les paires 0/1 + autres notes jusqu’à BO)
+    NOTE_COLS_FOR_BP = [
+        "B","D","F","H","J","L","N","P","R","T","V","X","Z","AB","AD","AF","AH",
+        "AK","AM","AO","AQ","AS","AU","AW","AY","BA","BC","BE","BG","BI","BK","BO"
     ]
-    missing = [c for c in expected_cols if c not in df.columns]
-    if missing:
-        # global "schema" failures: one per missing column (not per row)
-        for c in missing:
-            add_failure(
-                failures,
-                rule_id="SCHEMA_MISSING_COLUMN",
-                severity="BLOCKER",
-                row_idx=None,
-                row_key="",
-                column=c,
-                value="(missing column)",
-                recommendation=f"Ajouter la colonne '{c}' dans l'extraction ou corriger le nom exact de la colonne."
-            )
 
-    # Constants / patterns
-    BP2I_MAIN = "BP2I - BNP PARIBAS PARTNERS FOR INNOVATION"
+    for i in range(MAX_ROWS):
+        r = DATA_START_ROW + i
 
-    # Business org owning the risk:
-    # - either exactly BP2I_MAIN
-    # - OR starts with "BP2I " then next token endswith "A"
-    # e.g. "BP2I CI22A - EMEA RISK" ok, "BP2I CI22B - ..." not ok
-    business_org_regex = re.compile(r"^BP2I\s+(\S+)", re.IGNORECASE)
+        # Stop if no change ID in Sample of changes!A
+        chg_id = getv(ws_chg, "A", r)
+        if is_empty(chg_id):
+            break
 
-    # IT org managing the risk must be either "BP2I CI22B ..." or "BP2I CI23B ..."
-    it_org_regex = re.compile(r"^BP2I\s+CI(22B|23B)\b", re.IGNORECASE)
+        chg_id_str = normalize_str(chg_id)
 
-    # Description must contain those sections in order
-    # "Context ... Vulnerabilities ... Threat ... Impacted Assets ... Annual Review ..."
-    desc_sections = ["Context", "Vulnerabilities", "Threat", "Impacted Assets", "Annual Review"]
-    desc_pattern = re.compile(
-        r"Context[\s\S]*Vulnerabilities[\s\S]*Threat[\s\S]*Impacted Assets[\s\S]*Annual Review",
-        re.IGNORECASE
-    )
+        # -------------------------
+        # Simple copies + notes
+        # -------------------------
+        # A <- chg A
+        setv(ws_dest, "A", r, getv(ws_chg, "A", r))
+        setv(ws_dest, "B", r, note_0_if_filled_1_if_empty(getv(ws_dest, "A", r)))
 
-    # Iterate rows
-    for idx, row in df.iterrows():
-        row_key = choose_row_key(row)
+        setv(ws_dest, "C", r, getv(ws_chg, "B", r))
+        setv(ws_dest, "D", r, note_0_if_filled_1_if_empty(getv(ws_dest, "C", r)))
 
-        # 1) Risk ID -> not blank + starts RK
-        col = "Risk ID"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "RISK_ID_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            "Renseigner un Risk ID non vide (ex: RKxxxx).")
-            elif not v.startswith("RK"):
-                add_failure(failures, "RISK_ID_STARTS_RK", "BLOCKER", idx, row_key, col, v,
-                            "Le Risk ID doit commencer par 'RK' (ex: RK12345).")
+        setv(ws_dest, "E", r, getv(ws_chg, "AG", r))
+        setv(ws_dest, "F", r, note_0_if_filled_1_if_empty(getv(ws_dest, "E", r)))
 
-        # 2) Local Risk Reference -> not blank + starts RL
-        col = "Local Risk Reference"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "LOCAL_RISK_REF_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            "Renseigner une Local Risk Reference non vide (ex: RLxxxx).")
-            elif not v.startswith("RL"):
-                add_failure(failures, "LOCAL_RISK_REF_STARTS_RL", "BLOCKER", idx, row_key, col, v,
-                            "La Local Risk Reference doit commencer par 'RL' (ex: RL123).")
+        setv(ws_dest, "G", r, getv(ws_chg, "L", r))
+        setv(ws_dest, "H", r, note_0_if_filled_1_if_empty(getv(ws_dest, "G", r)))
 
-        # 3) Title -> not blank + starts with BP2I-RL{LocalRiskRef}
-        col = "Title"
-        if col in df.columns:
-            title = norm_str(row[col])
-            lrr = norm_str(row.get("Local Risk Reference", ""))
-            if not title:
-                add_failure(failures, "TITLE_NOT_BLANK", "BLOCKER", idx, row_key, col, title,
-                            "Renseigner un Title non vide.")
+        setv(ws_dest, "I", r, getv(ws_chg, "M", r))
+        setv(ws_dest, "J", r, note_0_if_filled_1_if_empty(getv(ws_dest, "I", r)))
+
+        setv(ws_dest, "K", r, getv(ws_chg, "AH", r))
+        setv(ws_dest, "L", r, note_0_if_filled_1_if_empty(getv(ws_dest, "K", r)))
+
+        setv(ws_dest, "M", r, getv(ws_chg, "AI", r))
+        setv(ws_dest, "N", r, note_0_if_filled_1_if_empty(getv(ws_dest, "M", r)))
+
+        setv(ws_dest, "O", r, getv(ws_chg, "Y", r))
+        setv(ws_dest, "P", r, note_0_if_filled_1_if_empty(getv(ws_dest, "O", r)))
+
+        setv(ws_dest, "Q", r, getv(ws_chg, "R", r))
+        setv(ws_dest, "R", r, note_0_if_filled_1_if_empty(getv(ws_dest, "Q", r)))
+
+        setv(ws_dest, "S", r, getv(ws_chg, "C", r))
+        setv(ws_dest, "T", r, note_0_if_filled_1_if_empty(getv(ws_dest, "S", r)))
+
+        setv(ws_dest, "U", r, getv(ws_chg, "S", r))
+        setv(ws_dest, "V", r, note_0_if_filled_1_if_empty(getv(ws_dest, "U", r)))
+
+        setv(ws_dest, "W", r, getv(ws_chg, "T", r))
+        setv(ws_dest, "X", r, note_0_if_filled_1_if_empty(getv(ws_dest, "W", r)))
+
+        setv(ws_dest, "Y", r, getv(ws_chg, "U", r))
+        setv(ws_dest, "Z", r, note_0_if_filled_1_if_empty(getv(ws_dest, "Y", r)))
+
+        setv(ws_dest, "AA", r, getv(ws_chg, "V", r))
+        setv(ws_dest, "AB", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AA", r)))
+
+        setv(ws_dest, "AC", r, getv(ws_chg, "W", r))
+        setv(ws_dest, "AD", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AC", r)))
+
+        setv(ws_dest, "AE", r, getv(ws_chg, "X", r))
+        setv(ws_dest, "AF", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AE", r)))
+
+        # AG = CONCAT( Sample(O) ; Sample(AJ) )
+        ag_val = join_non_empty([getv(ws_chg, "O", r), getv(ws_chg, "AJ", r)], sep=" ")
+        setv(ws_dest, "AG", r, ag_val)
+        setv(ws_dest, "AH", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AG", r)))
+
+        # AI <- E ; AJ <- F ; AK note pair (both filled => 0 else 1)
+        setv(ws_dest, "AI", r, getv(ws_chg, "E", r))
+        setv(ws_dest, "AJ", r, getv(ws_chg, "F", r))
+        ai_val = getv(ws_dest, "AI", r)
+        aj_val = getv(ws_dest, "AJ", r)
+        setv(ws_dest, "AK", r, 0 if (not is_empty(ai_val) and not is_empty(aj_val)) else 1)
+
+        # AL constant ; AM = 0
+        setv(ws_dest, "AL", r, TEXT_ALL_ELEMENTS)
+        setv(ws_dest, "AM", r, 0)
+
+        # AN rule: if Sample(M) == 'Standard' => 'Standard change' else Sample(AK)
+        if normalize_lower(getv(ws_chg, "M", r)) == "standard":
+            an_val = "Standard change"
+        else:
+            an_val = getv(ws_chg, "AK", r)
+        setv(ws_dest, "AN", r, an_val)
+
+        # AO rule:
+        # - if standard change => NA
+        # - else => 0 if filled, 1 if empty (on AN)
+        if normalize_lower(getv(ws_chg, "M", r)) == "standard":
+            setv(ws_dest, "AO", r, "NA")
+        else:
+            setv(ws_dest, "AO", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AN", r)))
+
+        # AP = join Sample(AC,AD,AE) with ", "
+        ap_val = join_non_empty([getv(ws_chg, "AC", r), getv(ws_chg, "AD", r), getv(ws_chg, "AE", r)], sep=", ")
+        setv(ws_dest, "AP", r, ap_val)
+
+        # AQ: 0 if ALL three filled, else 1
+        acv, adv, aev = getv(ws_chg, "AC", r), getv(ws_chg, "AD", r), getv(ws_chg, "AE", r)
+        setv(ws_dest, "AQ", r, 0 if (not is_empty(acv) and not is_empty(adv) and not is_empty(aev)) else 1)
+
+        # AR = join Sample(G,H) with "| "
+        ar_val = join_non_empty([getv(ws_chg, "G", r), getv(ws_chg, "H", r)], sep="| ")
+        setv(ws_dest, "AR", r, ar_val)
+        # AS: 0 if BOTH filled, else 1
+        gsv, hsv = getv(ws_chg, "G", r), getv(ws_chg, "H", r)
+        setv(ws_dest, "AS", r, 0 if (not is_empty(gsv) and not is_empty(hsv)) else 1)
+
+        # AT constant ; AU = 0
+        setv(ws_dest, "AT", r, TEXT_ALL_ELEMENTS)
+        setv(ws_dest, "AU", r, 0)
+
+        # AV = Sample(J) ; AW note
+        setv(ws_dest, "AV", r, getv(ws_chg, "J", r))
+        setv(ws_dest, "AW", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AV", r)))
+
+        # AX = Sample(AA) ; AY note
+        setv(ws_dest, "AX", r, getv(ws_chg, "AA", r))
+        setv(ws_dest, "AY", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AX", r)))
+
+        # AZ = Sample(I) ; BA note
+        setv(ws_dest, "AZ", r, getv(ws_chg, "I", r))
+        setv(ws_dest, "BA", r, note_0_if_filled_1_if_empty(getv(ws_dest, "AZ", r)))
+
+        # -------------------------
+        # Tasks logic: BB/BC and BJ/BK
+        # -------------------------
+        close_code_change = normalize_lower(getv(ws_chg, "J", r))  # you said "colonne J sample of changes"
+        is_unsuccessful_change = close_code_change == "unsuccessful"
+
+        if is_unsuccessful_change:
+            bb_text = "Unsucessful"  # keep your spelling
+            bb_note = "NA"
+        else:
+            # Check if THIS change id has any unsuccessful task (based on tasks sheet scan)
+            if chg_id_str in bad_changes:
+                bb_text = "Closed code d'une ou plusieurs tâches : unsuccessful [CHG][BP2I][Audit][RCG] list of tasks (40 SAMPLES)"
             else:
-                if lrr:
-                    expected_prefix = f"BP2I-{lrr}"
-                    if not title.startswith(expected_prefix):
-                        add_failure(
-                            failures, "TITLE_PREFIX_BP2I_RL", "MAJOR", idx, row_key, col, title,
-                            f"Le Title doit commencer par '{expected_prefix}...' (ex: {expected_prefix} - <suite>)."
-                        )
-                else:
-                    # Local risk ref empty already flagged; still provide guidance
-                    if not title.startswith("BP2I-RL"):
-                        add_failure(
-                            failures, "TITLE_STARTS_BP2I_RL", "MAJOR", idx, row_key, col, title,
-                            "Le Title doit commencer par 'BP2I-RL...' (et idéalement BP2I-{Local Risk Reference})."
-                        )
+                bb_text = "Closed code des tâches : successful [CHG][BP2I][Audit][RCG] list of tasks (40 SAMPLES)"
+            bb_note = 0  # as you requested for the rest
 
-        # 4) Residual risk level -> not blank
-        col = "Residual risk level"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "RESIDUAL_RISK_LEVEL_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            "Renseigner le Residual risk level (ex: 1 - ..., 2 - ...).")
+        setv(ws_dest, "BB", r, bb_text)
+        setv(ws_dest, "BC", r, bb_note)
 
-        # 5) Remediation Count -> if Response == 'Accept' then must be 0
-        col_rc = "Remediation Count"
-        col_resp = "Response"
-        if col_rc in df.columns and col_resp in df.columns:
-            resp = norm_str(row[col_resp])
-            rc_raw = row[col_rc]
-            rc_str = norm_str(rc_raw)
-            # parse remediation count numeric if possible
-            rc_val = None
-            if rc_str:
-                try:
-                    rc_val = int(float(rc_str))
-                except Exception:
-                    rc_val = None
+        # BJ/BK same logic as BB/BC
+        setv(ws_dest, "BJ", r, bb_text)
+        setv(ws_dest, "BK", r, bb_note)
 
-            if resp == "Accept":
-                if rc_val is None:
-                    add_failure(
-                        failures, "REMEDIATION_COUNT_NUMERIC", "MAJOR", idx, row_key, col_rc, rc_str,
-                        "Remediation Count doit être numérique; pour Response='Accept', il doit être 0."
-                    )
-                elif rc_val != 0:
-                    add_failure(
-                        failures, "REMEDIATION_COUNT_ACCEPT_ZERO", "MAJOR", idx, row_key, col_rc, rc_val,
-                        "Si Response='Accept', Remediation Count doit être 0. Mettre 0 ou corriger la Response."
-                    )
+        # -------------------------
+        # Date diffs: BD/BE and BF/BG
+        # BD = Sample(G) - Sample(E)
+        bd_val = diff_excel(getv(ws_chg, "G", r), getv(ws_chg, "E", r))
+        setv(ws_dest, "BD", r, bd_val)
 
-        # 6) Business organization owning the risk -> BP2I_MAIN OR BP2I <tokenEndingWithA> ...
-        col = "Business organization owning the risk"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "BUS_ORG_OWNING_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            "Renseigner la Business organization owning the risk.")
-            else:
-                if v == BP2I_MAIN:
-                    pass
-                else:
-                    m = business_org_regex.match(v)
-                    if not m:
-                        add_failure(
-                            failures, "BUS_ORG_OWNING_FORMAT", "MAJOR", idx, row_key, col, v,
-                            "Doit être 'BP2I - BNP PARIBAS PARTNERS FOR INNOVATION' OU commencer par 'BP2I <codeA> ...' (le mot après BP2I doit finir par 'A')."
-                        )
-                    else:
-                        token = m.group(1)
-                        if not token.upper().endswith("A"):
-                            add_failure(
-                                failures, "BUS_ORG_OWNING_TOKEN_ENDS_A", "MAJOR", idx, row_key, col, v,
-                                "Le mot suivant 'BP2I' doit finir par 'A' (ex: BP2I CI22A - ...)."
-                            )
+        # BE: if BD positive => 0 else:
+        #      if AV (close code) unsuccessful => 0 else if successful => 1
+        if bd_val is not None and bd_val > 0:
+            be_val = 0
+        else:
+            be_val = 0 if is_unsuccessful_change else 1
+        setv(ws_dest, "BE", r, be_val)
 
-        # 7) Business entity (Bus. Org. owning the risk) -> not blank + equals BP2I_MAIN
-        col = "Business entity (Bus. Org. owning the risk)"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "BUS_ENTITY_OWNING_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            f"Renseigner '{BP2I_MAIN}'.")
-            elif v != BP2I_MAIN:
-                add_failure(failures, "BUS_ENTITY_OWNING_EQUALS_BP2I", "MAJOR", idx, row_key, col, v,
-                            f"Mettre exactement '{BP2I_MAIN}'.")
+        # BF = Sample(H) - Sample(F)
+        bf_val = diff_excel(getv(ws_chg, "H", r), getv(ws_chg, "F", r))
+        setv(ws_dest, "BF", r, bf_val)
 
-        # 8) Business entity (IT Org. managing the risk) -> not blank + equals BP2I_MAIN
-        col = "Business entity (IT Org. managing the risk)"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "BUS_ENTITY_IT_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            f"Renseigner '{BP2I_MAIN}'.")
-            elif v != BP2I_MAIN:
-                add_failure(failures, "BUS_ENTITY_IT_EQUALS_BP2I", "MAJOR", idx, row_key, col, v,
-                            f"Mettre exactement '{BP2I_MAIN}'.")
+        # BG: if BF negative => 0 else:
+        #      if AV unsuccessful => 0 else successful => 1
+        if bf_val is not None and bf_val < 0:
+            bg_val = 0
+        else:
+            bg_val = 0 if is_unsuccessful_change else 1
+        setv(ws_dest, "BG", r, bg_val)
 
-        # 9) IT organization managing the risk -> not blank + starts BP2I CI22B... or BP2I CI23B...
-        col = "IT organization managing the risk"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "IT_ORG_MANAGING_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            "Renseigner IT organization managing the risk (ex: BP2I CI22B ... ou BP2I CI23B ...).")
-            elif not it_org_regex.match(v):
-                add_failure(
-                    failures, "IT_ORG_MANAGING_ALLOWED_PREFIX", "MAJOR", idx, row_key, col, v,
-                    "Doit commencer par 'BP2I CI22B' ou 'BP2I CI23B' (puis le reste peut suivre)."
-                )
+        # -------------------------
+        # BH/BI
+        # -------------------------
+        setv(ws_dest, "BH", r, getv(ws_chg, "AF", r))
+        setv(ws_dest, "BI", r, note_0_if_filled_1_if_empty(getv(ws_dest, "BH", r)))
 
-        # 10) Risk Owner/Sponsor -> not blank
-        col = "Risk Owner/Sponsor"
-        if col in df.columns and is_blank(row[col]):
-            add_failure(failures, "RISK_OWNER_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
-                        "Renseigner le Risk Owner/Sponsor.")
+        # -------------------------
+        # BL/BM
+        # BL = Concat(BE,BG) ; BM = sum(BE+BG)
+        # (Concat => "BE BG" pour être lisible)
+        setv(ws_dest, "BL", r, f"{getv(ws_dest, 'BE', r)} {getv(ws_dest, 'BG', r)}")
+        # sum: ignore non-numeric (ex: 'NA')
+        be_num = try_number(getv(ws_dest, "BE", r)) or 0
+        bg_num = try_number(getv(ws_dest, "BG", r)) or 0
+        setv(ws_dest, "BM", r, be_num + bg_num)
 
-        # 11) Risk Category -> not blank
-        col = "Risk Category"
-        if col in df.columns and is_blank(row[col]):
-            add_failure(failures, "RISK_CATEGORY_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
-                        "Renseigner le Risk Category.")
+        # -------------------------
+        # BN/BO
+        # BN = BH ; BO note on BN
+        setv(ws_dest, "BN", r, getv(ws_dest, "BH", r))
+        setv(ws_dest, "BO", r, note_0_if_filled_1_if_empty(getv(ws_dest, "BN", r)))
 
-        # 12) Topic Sub-Category -> not blank
-        col = "Topic Sub-Category"
-        if col in df.columns and is_blank(row[col]):
-            add_failure(failures, "TOPIC_SUBCATEGORY_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
-                        "Renseigner le Topic Sub-Category.")
+        # -------------------------
+        # BP = SUM of note columns (B, D, F, ... up to BO)
+        # Treat "NA" as 0
+        total = 0
+        for c in NOTE_COLS_FOR_BP:
+            v = getv(ws_dest, c, r)
+            if isinstance(v, str) and v.strip().upper() == "NA":
+                continue
+            n = try_number(v)
+            if n is not None:
+                total += n
+        setv(ws_dest, "BP", r, total)
 
-        # 13) Risk statement level 3 -> not blank
-        col = "Risk statement level 3"
-        if col in df.columns and is_blank(row[col]):
-            add_failure(failures, "RISK_STATEMENT_L3_NOT_BLANK", "BLOCKER", idx, row_key, col, norm_str(row[col]),
-                        "Renseigner le Risk statement level 3.")
-
-        # 14) Recorded date -> not blank
-        col = "Recorded date"
-        if col in df.columns:
-            dt = parse_date_any(row[col])
-            if dt is None:
-                add_failure(failures, "RECORDED_DATE_NOT_BLANK_OR_VALID", "BLOCKER", idx, row_key, col, norm_str(row[col]),
-                            "Renseigner une date valide pour Recorded date.")
-
-        # 15) Identification date -> not blank
-        col = "Identification date"
-        if col in df.columns:
-            dt = parse_date_any(row[col])
-            if dt is None:
-                add_failure(failures, "IDENTIFICATION_DATE_NOT_BLANK_OR_VALID", "BLOCKER", idx, row_key, col, norm_str(row[col]),
-                            "Renseigner une date valide pour Identification date.")
-
-        # 16) Latest review comments -> not blank
-        col = "Latest review comments"
-        if col in df.columns and is_blank(row[col]):
-            add_failure(failures, "LATEST_REVIEW_COMMENTS_NOT_BLANK", "MAJOR", idx, row_key, col, norm_str(row[col]),
-                        "Renseigner Latest review comments (commentaire de revue).")
-
-        # 17) Description -> not blank + contains sections in order
-        col = "Description"
-        if col in df.columns:
-            v = norm_str(row[col])
-            if not v:
-                add_failure(failures, "DESCRIPTION_NOT_BLANK", "BLOCKER", idx, row_key, col, v,
-                            "Renseigner la Description.")
-            else:
-                if not desc_pattern.search(v):
-                    add_failure(
-                        failures, "DESCRIPTION_SECTION_PATTERN", "MAJOR", idx, row_key, col, v[:200] + ("..." if len(v) > 200 else ""),
-                        "La Description doit contenir, dans l’ordre : 'Context', 'Vulnerabilities', 'Threat', 'Impacted Assets', 'Annual Review'. (Même si le texte entre sections est libre.)"
-                    )
-
-        # 18) Target residual risk level -> not blank + if Response == Mitigate then target < residual
-        col_target = "Target residual risk level"
-        col_resid = "Residual risk level"
-        col_resp = "Response"
-        if col_target in df.columns:
-            target = norm_str(row[col_target])
-            if not target:
-                add_failure(failures, "TARGET_RESIDUAL_NOT_BLANK", "BLOCKER", idx, row_key, col_target, target,
-                            "Renseigner le Target residual risk level.")
-            else:
-                resp = norm_str(row.get(col_resp, ""))
-                if resp == "Mitigate" and col_resid in df.columns:
-                    resid = norm_str(row[col_resid])
-                    target_num = first_digit_1_to_4(target)
-                    resid_num = first_digit_1_to_4(resid)
-                    if target_num is None or resid_num is None:
-                        add_failure(
-                            failures, "TARGET_RESIDUAL_PARSE_DIGIT", "MAJOR", idx, row_key, col_target, target,
-                            "Pour Response='Mitigate', Target residual risk level et Residual risk level doivent contenir un chiffre 1 à 4 pour comparaison."
-                        )
-                    else:
-                        if not (target_num < resid_num):
-                            add_failure(
-                                failures, "TARGET_RESIDUAL_STRICTLY_LOWER_WHEN_MITIGATE", "MAJOR", idx, row_key, col_target, target,
-                                f"Pour Response='Mitigate', le Target residual risk level ({target_num}) doit être strictement inférieur au Residual risk level ({resid_num})."
-                            )
-
-        # 19) Next review date -> must be last day of month + format yyyy-MM-dd (we validate as date + last day)
-        col = "Next review date"
-        if col in df.columns:
-            raw = row[col]
-            dt = parse_date_any(raw)
-            if dt is None:
-                add_failure(failures, "NEXT_REVIEW_DATE_NOT_BLANK_OR_VALID", "MAJOR", idx, row_key, col, norm_str(raw),
-                            "Renseigner Next review date au format 'yyyy-MM-dd' (date valide).")
-            else:
-                last_day = last_day_of_month(dt)
-                if dt.day != last_day:
-                    add_failure(
-                        failures, "NEXT_REVIEW_DATE_LAST_DAY_OF_MONTH", "MAJOR", idx, row_key, col, dt.strftime("%Y-%m-%d"),
-                        f"La Next review date doit être le dernier jour du mois. Exemple pour {dt.strftime('%Y-%m')}: {dt.year}-{dt.month:02d}-{last_day:02d}."
-                    )
-
-    failures_df = pd.DataFrame(failures)
-
-    # Summary and stats
-    total_rows = len(df)
-    total_failures = len(failures_df)
-
-    if total_rows == 0:
-        conformity = 100.0
-    else:
-        # Not a perfect "compliance %" (needs denominator = nb rules * rows), but still useful
-        conformity = None
-
-    rule_stats = (
-        failures_df.groupby(["rule_id", "severity"], dropna=False)
-        .size()
-        .reset_index(name="failures_count")
-        .sort_values(["severity", "failures_count"], ascending=[True, False])
-    ) if not failures_df.empty else pd.DataFrame(columns=["rule_id", "severity", "failures_count"])
-
-    summary = pd.DataFrame([{
-        "rows_analyzed": total_rows,
-        "failures_total": total_failures,
-        "distinct_rules_failed": failures_df["rule_id"].nunique() if not failures_df.empty else 0,
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }])
-
-    return summary, failures_df, rule_stats
+    wb.save(output_xlsx_path)
+    print(f"✅ Généré : {output_xlsx_path}")
 
 
-def generate_report(input_xlsx_path: str, output_xlsx_path: str, sheet_name=None):
-    # Read excel
-    df = pd.read_excel(input_xlsx_path, sheet_name=sheet_name)
-
-    summary, failures_df, rule_stats = run_quality_checks(df)
-
-    # Add some helpful ordering
-    if not failures_df.empty:
-        failures_df = failures_df.sort_values(["severity", "rule_id", "row_index"], ascending=[True, True, True])
-
-    with pd.ExcelWriter(output_xlsx_path, engine="openpyxl") as writer:
-        summary.to_excel(writer, index=False, sheet_name="Summary")
-        rule_stats.to_excel(writer, index=False, sheet_name="Rule_stats")
-        failures_df.to_excel(writer, index=False, sheet_name="Failures")
-
-    print(f"✅ Report generated: {output_xlsx_path}")
-
-
-if __name__ == "__main__":
-    # === A MODIFIER ===
-    INPUT_FILE = "risk_cards.xlsx"              # ton fichier ServiceNow
-    OUTPUT_FILE = "risk_cards_quality_report.xlsx"
-
-    # sheet_name=None -> première feuille; sinon mettre le nom exact
-    generate_report(INPUT_FILE, OUTPUT_FILE, sheet_name=None)
+# Exemple d’exécution:
+# run_fill("control.xlsx", "control_filled.xlsx")
