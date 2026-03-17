@@ -1,6 +1,5 @@
 from datetime import datetime
 from pathlib import Path
-import calendar
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -19,7 +18,6 @@ EXTRACT_SHEET_NAME = "Extract IPT"
 NUMBER_COL = "Number"
 PLANNED_END_DATE_COL = "Planned end date"
 
-# Noms des mois en français pour les feuilles
 FRENCH_MONTHS = {
     1: "janvier",
     2: "février",
@@ -46,10 +44,13 @@ def normalize_col_name(name):
     return str(name).strip()
 
 
+def normalize_sheet_name(name):
+    if name is None:
+        return None
+    return str(name).strip().lower()
+
+
 def load_extract_dataframe(extract_file):
-    """
-    Lit l'extract IPT.
-    """
     df = pd.read_excel(extract_file, dtype=object)
     df.columns = [normalize_col_name(c) for c in df.columns]
 
@@ -65,10 +66,6 @@ def load_extract_dataframe(extract_file):
 
 
 def get_month_targets(base_date=None, nb_months=3):
-    """
-    Retourne [(year, month_num, month_name_fr), ...]
-    pour le mois courant + nb_months-1 suivants.
-    """
     if base_date is None:
         base_date = datetime.today()
 
@@ -89,11 +86,19 @@ def get_month_targets(base_date=None, nb_months=3):
     return targets
 
 
+def find_sheet_case_insensitive(wb, target_name):
+    """
+    Cherche une feuille en comparant les noms en lower case.
+    Retourne la vraie feuille si trouvée, sinon None.
+    """
+    target_norm = normalize_sheet_name(target_name)
+    for sheet_name in wb.sheetnames:
+        if normalize_sheet_name(sheet_name) == target_norm:
+            return wb[sheet_name]
+    return None
+
+
 def get_header_map(ws):
-    """
-    Retourne un dict {nom_colonne: index_colonne_excel}
-    basé sur la première ligne de la feuille.
-    """
     header_map = {}
     for col_idx in range(1, ws.max_column + 1):
         value = ws.cell(row=1, column=col_idx).value
@@ -102,21 +107,23 @@ def get_header_map(ws):
     return header_map
 
 
+def ws_headers(ws):
+    headers = []
+    for col_idx in range(1, ws.max_column + 1):
+        headers.append(normalize_col_name(ws.cell(row=1, column=col_idx).value))
+    return headers
+
+
 def ensure_extract_sheet(wb, extract_df):
-    """
-    Remplace/crée la feuille Extract IPT avec le contenu brut de l'extract.
-    """
     if EXTRACT_SHEET_NAME in wb.sheetnames:
         ws = wb[EXTRACT_SHEET_NAME]
         wb.remove(ws)
 
     ws = wb.create_sheet(EXTRACT_SHEET_NAME)
 
-    # écrire les headers
     for col_idx, col_name in enumerate(extract_df.columns, start=1):
         ws.cell(row=1, column=col_idx, value=col_name)
 
-    # écrire les données
     for row_idx, row in enumerate(extract_df.itertuples(index=False), start=2):
         for col_idx, value in enumerate(row, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
@@ -126,8 +133,8 @@ def ensure_extract_sheet(wb, extract_df):
 
 def get_or_create_comment_column(ws, comment_header, planned_end_date_col_name):
     """
-    Trouve ou crée la colonne commentaire juste à droite de Planned end date.
-    Si la colonne existe déjà, la réutilise.
+    Crée la colonne commentaire dans tous les cas si elle n'existe pas,
+    juste à droite de Planned end date.
     """
     header_map = get_header_map(ws)
 
@@ -149,23 +156,16 @@ def get_or_create_comment_column(ws, comment_header, planned_end_date_col_name):
 
 
 def read_sheet_as_dataframe(ws):
-    """
-    Lit la feuille openpyxl en DataFrame pandas.
-    """
     data = list(ws.values)
     if not data:
         return pd.DataFrame()
 
     headers = [normalize_col_name(c) for c in data[0]]
     rows = data[1:]
-    df = pd.DataFrame(rows, columns=headers)
-    return df
+    return pd.DataFrame(rows, columns=headers)
 
 
 def month_filter(df, year, month):
-    """
-    Filtre l'extract sur Planned end date = année/mois cible.
-    """
     return df[
         (df[PLANNED_END_DATE_COL].dt.year == year) &
         (df[PLANNED_END_DATE_COL].dt.month == month)
@@ -173,11 +173,6 @@ def month_filter(df, year, month):
 
 
 def append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr):
-    """
-    Ajoute dans la feuille les IPT présentes dans l'extract
-    mais absentes de la feuille destination.
-    Ne copie que les colonnes déjà existantes dans la feuille.
-    """
     header_map = get_header_map(ws)
 
     if NUMBER_COL not in header_map:
@@ -199,7 +194,6 @@ def append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr):
     if to_add.empty:
         return 0
 
-    # colonnes communes entre extract et feuille destination
     common_cols = [col for col in ws_headers(ws) if col in to_add.columns]
 
     added_count = 0
@@ -220,19 +214,7 @@ def append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr):
     return added_count
 
 
-def ws_headers(ws):
-    headers = []
-    for col_idx in range(1, ws.max_column + 1):
-        headers.append(normalize_col_name(ws.cell(row=1, column=col_idx).value))
-    return headers
-
-
 def mark_closed_ipts(ws, extract_subset, comment_col_idx):
-    """
-    Pour les IPT présentes dans la feuille mensuelle
-    mais absentes de l'extract du mois correspondant :
-    mettre 'Closed' dans la colonne commentaire.
-    """
     header_map = get_header_map(ws)
 
     if NUMBER_COL not in header_map:
@@ -287,27 +269,23 @@ def main():
 
     wb = load_workbook(TRACKING_FILE)
 
-    # 1) Charger/remplacer la feuille Extract IPT
+    # 1) remplacer / recréer la feuille Extract IPT
     ensure_extract_sheet(wb, extract_df)
 
-    # 2) Traiter mois courant + 2 mois suivants
+    # 2) traiter mois courant + 2 mois suivants
     targets = get_month_targets(today, nb_months=3)
-
     summary = []
 
     for year, month_num, month_sheet_name in targets:
-        if month_sheet_name not in wb.sheetnames:
-            summary.append(
-                f"[WARNING] Feuille '{month_sheet_name}' absente, mois ignoré."
-            )
+        ws = find_sheet_case_insensitive(wb, month_sheet_name)
+
+        if ws is None:
+            summary.append(f"[WARNING] Feuille '{month_sheet_name}' absente, mois ignoré.")
             continue
 
-        ws = wb[month_sheet_name]
-
-        # Filtre extract pour le mois cible
         extract_subset = month_filter(extract_df, year, month_num)
 
-        # créer / récupérer colonne commentaire
+        # colonne commentaire créée dans tous les cas
         comment_col_idx = get_or_create_comment_column(
             ws,
             comment_header=comment_header,
@@ -320,11 +298,10 @@ def main():
         autosize_columns(ws)
 
         summary.append(
-            f"[OK] Feuille '{month_sheet_name}' : {len(extract_subset)} IPT dans l'extract, "
+            f"[OK] Feuille '{ws.title}' : {len(extract_subset)} IPT dans l'extract, "
             f"{added} ajoutée(s), {closed} marquée(s) Closed."
         )
 
-    # autosize aussi sur Extract IPT
     autosize_columns(wb[EXTRACT_SHEET_NAME])
 
     wb.save(OUTPUT_FILE)
