@@ -3,7 +3,7 @@ from pathlib import Path
 from copy import copy
 
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.utils import get_column_letter
 
 
@@ -11,13 +11,16 @@ from openpyxl.utils import get_column_letter
 # CONFIG
 # ============================================================
 
-EXTRACT_FILE = r"extract_ipt.xlsx"    # à modifier
-TRACKING_FILE = r"suivi.xlsx"         # à modifier
-OUTPUT_FILE = r"suivi_updated.xlsx"   # fichier de sortie
+EXTRACT_FILE = r"extract_ipt.xlsx"            # à modifier
+TRACKING_FILE = r"suivi.xlsx"                 # à modifier
+OUTPUT_FILE = r"suivi_updated.xlsx"           # suivi mis à jour
+SUMMARY_FILE = r"ipt_summary.xlsx"            # nouveau fichier de synthèse
 
 EXTRACT_SHEET_NAME = "Extract IPT"
 NUMBER_COL = "Number"
 PLANNED_END_DATE_COL = "Planned end date"
+RISK_ID_COL = "Risk ID"
+PERCENT_COMPLETE_COL = "Percent Complete"
 
 FRENCH_MONTHS = {
     1: "janvier",
@@ -31,7 +34,23 @@ FRENCH_MONTHS = {
     9: "septembre",
     10: "octobre",
     11: "novembre",
+    12: "novembre",
     12: "décembre",
+}
+
+ENGLISH_MONTHS = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
 }
 
 
@@ -51,17 +70,53 @@ def normalize_sheet_name(name):
     return str(name).strip().lower()
 
 
+def clean_percent_value(value):
+    """
+    Transforme Percent Complete en nombre si possible.
+    Gère les cas :
+    - 0
+    - 15
+    - 15%
+    - '15 %'
+    - 0.15 (si jamais)
+    """
+    if pd.isna(value):
+        return None
+
+    if isinstance(value, str):
+        v = value.strip().replace("%", "").replace(",", ".")
+        if v == "":
+            return None
+        try:
+            num = float(v)
+        except ValueError:
+            return None
+    else:
+        try:
+            num = float(value)
+        except Exception:
+            return None
+
+    # Si la valeur ressemble à une fraction Excel (0.15 = 15%)
+    if 0 <= num <= 1:
+        return num * 100
+
+    return num
+
+
 def load_extract_dataframe(extract_file):
     df = pd.read_excel(extract_file, dtype=object)
     df.columns = [normalize_col_name(c) for c in df.columns]
 
-    if NUMBER_COL not in df.columns:
-        raise ValueError(f"Colonne obligatoire absente dans l'extract : '{NUMBER_COL}'")
-    if PLANNED_END_DATE_COL not in df.columns:
-        raise ValueError(f"Colonne obligatoire absente dans l'extract : '{PLANNED_END_DATE_COL}'")
+    mandatory_cols = [NUMBER_COL, PLANNED_END_DATE_COL, RISK_ID_COL, PERCENT_COMPLETE_COL]
+    for col in mandatory_cols:
+        if col not in df.columns:
+            raise ValueError(f"Colonne obligatoire absente dans l'extract : '{col}'")
 
     df[NUMBER_COL] = df[NUMBER_COL].astype(str).str.strip()
     df[PLANNED_END_DATE_COL] = pd.to_datetime(df[PLANNED_END_DATE_COL], errors="coerce")
+    df[RISK_ID_COL] = df[RISK_ID_COL].astype(str).str.strip()
+    df["_PercentCompleteNumeric"] = df[PERCENT_COMPLETE_COL].apply(clean_percent_value)
 
     return df
 
@@ -82,7 +137,14 @@ def get_month_targets(base_date=None, nb_months=3):
             target_month -= 12
             target_year += 1
 
-        targets.append((target_year, target_month, FRENCH_MONTHS[target_month]))
+        targets.append(
+            (
+                target_year,
+                target_month,
+                FRENCH_MONTHS[target_month],
+                ENGLISH_MONTHS[target_month],
+            )
+        )
 
     return targets
 
@@ -191,20 +253,18 @@ def clear_worksheet_content(ws):
 
 
 def ensure_extract_sheet(wb, extract_df):
-    """
-    Garde la feuille si elle existe déjà pour préserver au max la mise en forme,
-    puis remplace son contenu.
-    """
     if EXTRACT_SHEET_NAME in wb.sheetnames:
         ws = wb[EXTRACT_SHEET_NAME]
         clear_worksheet_content(ws)
     else:
         ws = wb.create_sheet(EXTRACT_SHEET_NAME)
 
-    for col_idx, col_name in enumerate(extract_df.columns, start=1):
+    export_df = extract_df.drop(columns=["_PercentCompleteNumeric"], errors="ignore")
+
+    for col_idx, col_name in enumerate(export_df.columns, start=1):
         ws.cell(row=1, column=col_idx, value=col_name)
 
-    for row_idx, row in enumerate(extract_df.itertuples(index=False), start=2):
+    for row_idx, row in enumerate(export_df.itertuples(index=False), start=2):
         for col_idx, value in enumerate(row, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
 
@@ -216,11 +276,6 @@ def ensure_extract_sheet(wb, extract_df):
 # ============================================================
 
 def get_or_create_comment_column(ws, comment_header, planned_end_date_col_name):
-    """
-    Crée la colonne commentaire dans tous les cas si elle n'existe pas,
-    juste à droite de Planned end date.
-    En conservant le style Excel.
-    """
     header_map = get_header_map(ws)
 
     if comment_header in header_map:
@@ -235,22 +290,13 @@ def get_or_create_comment_column(ws, comment_header, planned_end_date_col_name):
     insert_at = planned_col_idx + 1
 
     ws.insert_cols(insert_at)
-
-    # Copier le style de la colonne Planned end date
     copy_column_style(ws, planned_col_idx, insert_at)
-
-    # Écrire le header commentaire
     ws.cell(row=1, column=insert_at, value=comment_header)
 
     return insert_at
 
 
 def append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr):
-    """
-    Ajoute les IPT présentes dans l'extract mais absentes de la feuille destination.
-    On ne copie que les colonnes existantes dans la feuille destination.
-    On garde la mise en forme en recopiant le style de la dernière ligne existante.
-    """
     header_map = get_header_map(ws)
 
     if NUMBER_COL not in header_map:
@@ -299,10 +345,6 @@ def append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr):
 
 
 def mark_closed_ipts(ws, extract_subset, comment_col_idx):
-    """
-    Pour les IPT présentes dans la feuille mensuelle
-    mais absentes de l'extract filtré pour ce mois : mettre Closed.
-    """
     header_map = get_header_map(ws)
 
     if NUMBER_COL not in header_map:
@@ -329,14 +371,68 @@ def mark_closed_ipts(ws, extract_subset, comment_col_idx):
 
 
 # ============================================================
+# SYNTHÈSE MENSUELLE
+# ============================================================
+
+def build_month_summary_row(extract_subset, month_name_en, status_label):
+    total_ipts = len(extract_subset)
+
+    risk_ids = (
+        extract_subset[RISK_ID_COL]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+    risk_ids = risk_ids[risk_ids != ""]
+    distinct_risk_ids = risk_ids.nunique()
+
+    pct = extract_subset["_PercentCompleteNumeric"]
+
+    lt_50 = pct.apply(lambda x: x is not None and pd.notna(x) and x < 50).sum()
+    eq_0 = pct.apply(lambda x: x is not None and pd.notna(x) and x == 0).sum()
+
+    return {
+        "Status": status_label,
+        "Month": month_name_en,
+        "IPTs on RLs": f"{total_ipts} IPTs on {distinct_risk_ids} RLs",
+        "IPTs <50%": f"{lt_50} IPTs <50%",
+        "IPTs = 0%": f"Dont {eq_0} IPTs = 0%",
+        "Total IPTs": total_ipts,
+        "Distinct Risk IDs": distinct_risk_ids,
+        "IPTs Percent < 50": int(lt_50),
+        "IPTs Percent = 0": int(eq_0),
+    }
+
+
+def write_summary_excel(summary_rows, output_file):
+    df = pd.DataFrame(summary_rows)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+
+    headers = list(df.columns)
+    for col_idx, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=col_idx, value=header)
+
+    for row_idx, row in enumerate(df.itertuples(index=False), start=2):
+        for col_idx, value in enumerate(row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    autosize_columns(ws)
+    wb.save(output_file)
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 def main():
     today = datetime.today()
     day_str = str(today.day)
-    month_name_today = FRENCH_MONTHS[today.month]
-    comment_header = f"Comments {day_str} {month_name_today}"
+    month_name_today_fr = FRENCH_MONTHS[today.month]
+    comment_header = f"Comments {day_str} {month_name_today_fr}"
+    status_label = f"Status {today.year} {ENGLISH_MONTHS[today.month]} {today.day:02d}"
 
     extract_path = Path(EXTRACT_FILE)
     tracking_path = Path(TRACKING_FILE)
@@ -349,31 +445,40 @@ def main():
     extract_df = load_extract_dataframe(EXTRACT_FILE)
     wb = load_workbook(TRACKING_FILE)
 
-    # 1) Mise à jour de la feuille Extract IPT
+    # 1) Mise à jour du fichier de suivi
     ensure_extract_sheet(wb, extract_df)
     autosize_columns(wb[EXTRACT_SHEET_NAME])
 
     # 2) Traitement mois courant + 2 mois suivants
     targets = get_month_targets(today, nb_months=3)
     summary = []
+    summary_rows = []
 
-    for year, month_num, month_sheet_name in targets:
-        ws = find_sheet_case_insensitive(wb, month_sheet_name)
-
-        if ws is None:
-            summary.append(f"[WARNING] Feuille '{month_sheet_name}' absente, mois ignoré.")
-            continue
+    for year, month_num, month_name_fr, month_name_en in targets:
+        ws = find_sheet_case_insensitive(wb, month_name_fr)
 
         extract_subset = month_filter(extract_df, year, month_num)
 
-        # Créer la colonne commentaire dans tous les cas
+        # construire la synthèse même si la feuille mensuelle n'existe pas
+        summary_rows.append(
+            build_month_summary_row(
+                extract_subset=extract_subset,
+                month_name_en=month_name_en,
+                status_label=status_label,
+            )
+        )
+
+        if ws is None:
+            summary.append(f"[WARNING] Feuille '{month_name_fr}' absente, mois ignoré pour le suivi.")
+            continue
+
         comment_col_idx = get_or_create_comment_column(
             ws,
             comment_header=comment_header,
             planned_end_date_col_name=PLANNED_END_DATE_COL,
         )
 
-        added = append_new_ipts(ws, extract_subset, comment_col_idx, month_sheet_name)
+        added = append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr)
         closed = mark_closed_ipts(ws, extract_subset, comment_col_idx)
 
         autosize_columns(ws)
@@ -385,8 +490,12 @@ def main():
 
     wb.save(OUTPUT_FILE)
 
+    # 3) Export fichier de synthèse
+    write_summary_excel(summary_rows, SUMMARY_FILE)
+
     print("Traitement terminé.")
-    print(f"Fichier généré : {OUTPUT_FILE}")
+    print(f"Fichier de suivi généré : {OUTPUT_FILE}")
+    print(f"Fichier de synthèse généré : {SUMMARY_FILE}")
     print("\nRésumé :")
     for line in summary:
         print(line)
