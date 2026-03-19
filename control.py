@@ -35,8 +35,13 @@ def clean_title(value):
 def normalize_tag(value):
     if value is None or pd.isna(value):
         return ""
-    text = str(value).strip()
-    return text
+    return str(value).strip()
+
+
+def normalize_response(value):
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip().lower()
 
 
 def add_textbox(
@@ -80,6 +85,41 @@ def add_textbox(
     return textbox
 
 
+def build_rl_to_tag_map(risk_cards_df):
+    """
+    Construit un mapping RL -> TAG à partir de l'extract risk cards.
+    On prend le premier TAG non vide trouvé pour chaque RL.
+    """
+    possible_rl_columns = [
+        "Local risk reference",
+        "Local Risk Reference",
+        "RL",
+        "Risk ID",
+        "Risk Id",
+    ]
+
+    rl_col = None
+    for col in possible_rl_columns:
+        if col in risk_cards_df.columns:
+            rl_col = col
+            break
+
+    if rl_col is None:
+        return {}
+
+    temp = risk_cards_df[[rl_col, "TAG"]].copy()
+    temp[rl_col] = temp[rl_col].astype(str).str.strip()
+    temp["TAG"] = temp["TAG"].apply(normalize_tag)
+
+    temp = temp[(temp[rl_col] != "") & (temp["TAG"] != "")]
+    if temp.empty:
+        return {}
+
+    temp = temp.drop_duplicates(subset=[rl_col], keep="first")
+
+    return dict(zip(temp[rl_col], temp["TAG"]))
+
+
 def compute_metrics(
     ipt_input_file="all_ipt.xlsx",
     risk_cards_input_file="risk_cards_extract.xlsx",
@@ -114,11 +154,29 @@ def compute_metrics(
         ipt_all["Planned end date"], errors="coerce"
     )
 
+    # =========================
+    # Lecture Risk Cards
+    # =========================
+    risk_cards = pd.read_excel(risk_cards_input_file)
+
+    expected_rc_columns = ["Response", "Title", "TAG"]
+    missing_rc = [c for c in expected_rc_columns if c not in risk_cards.columns]
+    if missing_rc:
+        raise ValueError(
+            f"Colonnes manquantes dans le fichier Risk Cards: {missing_rc}"
+        )
+
+    # Mapping RL -> TAG pour classer aussi les IPT
+    rl_to_tag = build_rl_to_tag_map(risk_cards)
+
+    # =========================
+    # Split IPT open / closed
+    # =========================
     ipt_closed = ipt_all[ipt_all["State"] == "Closed Complete"].copy()
     ipt_open = ipt_all[ipt_all["State"] != "Closed Complete"].copy()
 
-    rls_closed = set(ipt_closed["Local risk reference"].dropna().unique())
-    rls_open = set(ipt_open["Local risk reference"].dropna().unique())
+    rls_closed = set(ipt_closed["Local risk reference"].dropna().astype(str).str.strip().unique())
+    rls_open = set(ipt_open["Local risk reference"].dropna().astype(str).str.strip().unique())
     all_rls = sorted(rls_closed.union(rls_open))
 
     results = []
@@ -127,8 +185,12 @@ def compute_metrics(
     # Construction métriques IPT
     # =========================
     for rl in all_rls:
-        closed_subset = ipt_closed[ipt_closed["Local risk reference"] == rl]
-        open_subset = ipt_open[ipt_open["Local risk reference"] == rl]
+        closed_subset = ipt_closed[
+            ipt_closed["Local risk reference"].astype(str).str.strip() == rl
+        ]
+        open_subset = ipt_open[
+            ipt_open["Local risk reference"].astype(str).str.strip() == rl
+        ]
 
         closed_count = closed_subset.shape[0]
         open_count = open_subset.shape[0]
@@ -162,6 +224,8 @@ def compute_metrics(
             sample_row["Title"].iloc[0] if not sample_row.empty else rl
         )
 
+        tag = rl_to_tag.get(str(rl).strip(), "")
+
         results.append(
             {
                 "Source Type": "IPT",
@@ -174,24 +238,15 @@ def compute_metrics(
                 "Residual risk level": residual_level,
                 "Bar Label": f"{avg_completion:.2f}".rstrip("0").rstrip(".") + "%",
                 "Is Acceptance": False,
-                "TAG": "",
+                "TAG": tag,
             }
         )
 
     # =========================
-    # Lecture Risk Cards
+    # Ajout des Risk Cards Accept
     # =========================
-    risk_cards = pd.read_excel(risk_cards_input_file)
-
-    expected_rc_columns = ["Response", "Title", "TAG"]
-    missing_rc = [c for c in expected_rc_columns if c not in risk_cards.columns]
-    if missing_rc:
-        raise ValueError(
-            f"Colonnes manquantes dans le fichier Risk Cards: {missing_rc}"
-        )
-
     risk_cards_accept = risk_cards[
-        risk_cards["Response"].astype(str).str.strip().str.lower() == "accept"
+        risk_cards["Response"].apply(normalize_response) == "accept"
     ].copy()
 
     for _, row in risk_cards_accept.iterrows():
@@ -216,7 +271,6 @@ def compute_metrics(
 
     df_results = pd.DataFrame(results)
 
-    # Pour l'Excel on garde tout
     with pd.ExcelWriter(excel_output, engine="openpyxl") as writer:
         df_results.to_excel(writer, sheet_name="Metrics", index=False)
 
@@ -253,7 +307,6 @@ def draw_group_frame(slide):
 
 
 def add_vertical_tag_panel(slide, tag_text):
-    # panneau vertical à gauche
     panel = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
         Inches(0.35),
@@ -281,19 +334,18 @@ def add_vertical_tag_panel(slide, tag_text):
 
 
 def add_slide_header(slide, section_name=None):
-    if section_name:
-        add_textbox(
-            slide,
-            Inches(10.9),
-            Inches(0.72),
-            Inches(1.5),
-            Inches(0.22),
-            "actions",
-            font_size=11,
-            bold=False,
-            font_color=RGBColor(80, 80, 80),
-            align=PP_ALIGN.CENTER,
-        )
+    add_textbox(
+        slide,
+        Inches(10.9),
+        Inches(0.72),
+        Inches(1.5),
+        Inches(0.22),
+        "actions",
+        font_size=11,
+        bold=False,
+        font_color=RGBColor(80, 80, 80),
+        align=PP_ALIGN.CENTER,
+    )
 
     draw_group_frame(slide)
 
@@ -301,12 +353,7 @@ def add_slide_header(slide, section_name=None):
         add_vertical_tag_panel(slide, section_name)
 
 
-def add_row_to_slide(
-    slide,
-    row,
-    row_index_in_slide,
-    has_tag_panel,
-):
+def add_row_to_slide(slide, row, row_index_in_slide, has_tag_panel):
     text_dark = RGBColor(0, 0, 0)
     text_light = RGBColor(255, 255, 255)
     green = RGBColor(67, 160, 71)
@@ -341,7 +388,6 @@ def add_row_to_slide(
     bar_label = safe_text(row.get("Bar Label", ""))
     is_acceptance = bool(row.get("Is Acceptance", False))
 
-    # boîte titre
     title_box = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
         label_left,
@@ -366,7 +412,6 @@ def add_row_to_slide(
         align=PP_ALIGN.LEFT,
     )
 
-    # ratio
     add_textbox(
         slide,
         ratio_left,
@@ -380,7 +425,6 @@ def add_row_to_slide(
         align=PP_ALIGN.CENTER,
     )
 
-    # fond barre
     bg_bar = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
         bar_left,
@@ -394,7 +438,6 @@ def add_row_to_slide(
     bg_bar.line.width = Pt(1.1)
     bg_bar.line.dash_style = 1
 
-    # barre progression pour IPT
     if not is_acceptance and progress > 0:
         fill_width = bar_width * (progress / 100.0)
         fg_bar = slide.shapes.add_shape(
@@ -408,7 +451,6 @@ def add_row_to_slide(
         fg_bar.fill.fore_color.rgb = green
         fg_bar.line.fill.background()
 
-    # texte dans la barre
     add_textbox(
         slide,
         bar_left,
@@ -422,7 +464,6 @@ def add_row_to_slide(
         align=PP_ALIGN.CENTER,
     )
 
-    # date
     add_textbox(
         slide,
         date_left,
@@ -444,28 +485,31 @@ def create_progress_ppt(df, output_file):
 
     rows_per_slide = 13
 
-    # Groupes :
-    # 1) TAG non vide -> une ou plusieurs slides par tag
-    # 2) TAG vide -> slides finales sans tag panel
     df = df.copy()
     df["TAG"] = df["TAG"].fillna("").astype(str).str.strip()
 
     tagged_df = df[df["TAG"] != ""].copy()
     untagged_df = df[df["TAG"] == ""].copy()
 
-    # tri : d'abord risk cards taggées par tag puis title
-    tagged_df = tagged_df.sort_values(by=["TAG", "Title"], ascending=[True, True]).reset_index(drop=True)
+    # Dans les slides taggées :
+    # on met IPT + Acceptance ensemble si TAG renseigné
+    source_order_tagged = {"IPT": 0, "Risk Card Acceptance": 1}
+    tagged_df["__source_order"] = tagged_df["Source Type"].map(source_order_tagged).fillna(99)
+    tagged_df = (
+        tagged_df.sort_values(by=["TAG", "__source_order", "Title"], ascending=[True, True, True])
+        .drop(columns="__source_order")
+        .reset_index(drop=True)
+    )
 
-    # pour le sans tag : IPT + éventuelles RC sans tag à la fin
-    source_order = {"IPT": 0, "Risk Card Acceptance": 1}
-    untagged_df["__source_order"] = untagged_df["Source Type"].map(source_order).fillna(99)
+    # Dans les slides non taggées :
+    source_order_untagged = {"IPT": 0, "Risk Card Acceptance": 1}
+    untagged_df["__source_order"] = untagged_df["Source Type"].map(source_order_untagged).fillna(99)
     untagged_df = (
         untagged_df.sort_values(by=["__source_order", "Title"], ascending=[True, True])
         .drop(columns="__source_order")
         .reset_index(drop=True)
     )
 
-    # Slides pour chaque TAG
     if not tagged_df.empty:
         for tag_value, group_df in tagged_df.groupby("TAG", sort=True):
             group_df = group_df.reset_index(drop=True)
@@ -488,7 +532,6 @@ def create_progress_ppt(df, output_file):
                         has_tag_panel=True,
                     )
 
-    # Slides sans TAG à la fin
     if not untagged_df.empty:
         total_rows = len(untagged_df)
         total_slides = math.ceil(total_rows / rows_per_slide)
@@ -509,7 +552,6 @@ def create_progress_ppt(df, output_file):
                     has_tag_panel=False,
                 )
 
-    # si aucun slide créé
     if len(prs.slides) == 0:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         add_textbox(
