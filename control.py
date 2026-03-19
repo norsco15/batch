@@ -8,6 +8,9 @@ from pptx.enum.text import PP_ALIGN, MSO_VERTICAL_ANCHOR
 from pptx.dml.color import RGBColor
 
 
+MAJOR_LEVEL_VALUE = "3 - Major"
+
+
 def format_date_for_ppt(value):
     if pd.isna(value) or value is None:
         return "N/A"
@@ -39,6 +42,12 @@ def normalize_tag(value):
 
 
 def normalize_response(value):
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip().lower()
+
+
+def normalize_major(value):
     if value is None or pd.isna(value):
         return ""
     return str(value).strip().lower()
@@ -83,6 +92,14 @@ def add_textbox(
     run.font.color.rgb = font_color
 
     return textbox
+
+
+def filter_major_rows(df, column_name="Residual risk level"):
+    if column_name not in df.columns:
+        raise ValueError(f"Colonne manquante pour le filtre major: {column_name}")
+
+    target = normalize_major(MAJOR_LEVEL_VALUE)
+    return df[df[column_name].apply(normalize_major) == target].copy()
 
 
 def build_rl_to_tag_map(risk_cards_df):
@@ -154,17 +171,23 @@ def compute_metrics(
         ipt_all["Planned end date"], errors="coerce"
     )
 
+    # Filtre Major dès le départ
+    ipt_all = filter_major_rows(ipt_all, column_name="Residual risk level")
+
     # =========================
     # Lecture Risk Cards
     # =========================
     risk_cards = pd.read_excel(risk_cards_input_file)
 
-    expected_rc_columns = ["Response", "Title", "TAG"]
+    expected_rc_columns = ["Response", "Title", "TAG", "Residual risk level"]
     missing_rc = [c for c in expected_rc_columns if c not in risk_cards.columns]
     if missing_rc:
         raise ValueError(
             f"Colonnes manquantes dans le fichier Risk Cards: {missing_rc}"
         )
+
+    # Filtre Major dès le départ
+    risk_cards = filter_major_rows(risk_cards, column_name="Residual risk level")
 
     # Mapping RL -> TAG pour classer aussi les IPT
     rl_to_tag = build_rl_to_tag_map(risk_cards)
@@ -175,8 +198,12 @@ def compute_metrics(
     ipt_closed = ipt_all[ipt_all["State"] == "Closed Complete"].copy()
     ipt_open = ipt_all[ipt_all["State"] != "Closed Complete"].copy()
 
-    rls_closed = set(ipt_closed["Local risk reference"].dropna().astype(str).str.strip().unique())
-    rls_open = set(ipt_open["Local risk reference"].dropna().astype(str).str.strip().unique())
+    rls_closed = set(
+        ipt_closed["Local risk reference"].dropna().astype(str).str.strip().unique()
+    )
+    rls_open = set(
+        ipt_open["Local risk reference"].dropna().astype(str).str.strip().unique()
+    )
     all_rls = sorted(rls_closed.union(rls_open))
 
     results = []
@@ -243,7 +270,7 @@ def compute_metrics(
         )
 
     # =========================
-    # Ajout des Risk Cards Accept
+    # Ajout des Risk Cards Accept (Major uniquement déjà filtré)
     # =========================
     risk_cards_accept = risk_cards[
         risk_cards["Response"].apply(normalize_response) == "accept"
@@ -262,7 +289,7 @@ def compute_metrics(
                 "Average completion rate (%)": 0,
                 "Latest planned end date": None,
                 "Risk Owner/Sponsor": "N/A",
-                "Residual risk level": "N/A",
+                "Residual risk level": safe_text(row.get("Residual risk level")),
                 "Bar Label": "Acceptance",
                 "Is Acceptance": True,
                 "TAG": tag,
@@ -491,21 +518,24 @@ def create_progress_ppt(df, output_file):
     tagged_df = df[df["TAG"] != ""].copy()
     untagged_df = df[df["TAG"] == ""].copy()
 
-    # Dans les slides taggées :
-    # on met IPT + Acceptance ensemble si TAG renseigné
     source_order_tagged = {"IPT": 0, "Risk Card Acceptance": 1}
     tagged_df["__source_order"] = tagged_df["Source Type"].map(source_order_tagged).fillna(99)
     tagged_df = (
-        tagged_df.sort_values(by=["TAG", "__source_order", "Title"], ascending=[True, True, True])
+        tagged_df.sort_values(
+            by=["TAG", "__source_order", "Title"],
+            ascending=[True, True, True]
+        )
         .drop(columns="__source_order")
         .reset_index(drop=True)
     )
 
-    # Dans les slides non taggées :
     source_order_untagged = {"IPT": 0, "Risk Card Acceptance": 1}
     untagged_df["__source_order"] = untagged_df["Source Type"].map(source_order_untagged).fillna(99)
     untagged_df = (
-        untagged_df.sort_values(by=["__source_order", "Title"], ascending=[True, True])
+        untagged_df.sort_values(
+            by=["__source_order", "Title"],
+            ascending=[True, True]
+        )
         .drop(columns="__source_order")
         .reset_index(drop=True)
     )
@@ -560,7 +590,7 @@ def create_progress_ppt(df, output_file):
             Inches(3),
             Inches(6),
             Inches(0.5),
-            "No data available",
+            "No major risk data available",
             font_size=18,
             bold=True,
         )
