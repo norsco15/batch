@@ -1,505 +1,314 @@
-from datetime import datetime
-from pathlib import Path
-from copy import copy
-
+import math
 import pandas as pd
-from openpyxl import load_workbook, Workbook
-from openpyxl.utils import get_column_letter
+from datetime import datetime
+
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN, MSO_VERTICAL_ANCHOR
+from pptx.dml.color import RGBColor
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
-EXTRACT_FILE = r"extract_ipt.xlsx"            # à modifier
-TRACKING_FILE = r"suivi.xlsx"                 # à modifier
-OUTPUT_FILE = r"suivi_updated.xlsx"           # suivi mis à jour
-SUMMARY_FILE = r"ipt_summary.xlsx"            # nouveau fichier de synthèse
-
-EXTRACT_SHEET_NAME = "Extract IPT"
-NUMBER_COL = "Number"
-PLANNED_END_DATE_COL = "Planned end date"
-RISK_ID_COL = "Risk ID"
-PERCENT_COMPLETE_COL = "Percent Complete"
-
-FRENCH_MONTHS = {
-    1: "janvier",
-    2: "février",
-    3: "mars",
-    4: "avril",
-    5: "mai",
-    6: "juin",
-    7: "juillet",
-    8: "août",
-    9: "septembre",
-    10: "octobre",
-    11: "novembre",
-    12: "novembre",
-    12: "décembre",
-}
-
-ENGLISH_MONTHS = {
-    1: "January",
-    2: "February",
-    3: "March",
-    4: "April",
-    5: "May",
-    6: "June",
-    7: "July",
-    8: "August",
-    9: "September",
-    10: "October",
-    11: "November",
-    12: "December",
-}
-
-
-# ============================================================
-# HELPERS GENERAUX
-# ============================================================
-
-def normalize_col_name(name):
-    if name is None:
-        return None
-    return str(name).strip()
-
-
-def normalize_sheet_name(name):
-    if name is None:
-        return None
-    return str(name).strip().lower()
-
-
-def clean_percent_value(value):
-    """
-    Transforme Percent Complete en nombre si possible.
-    Gère les cas :
-    - 0
-    - 15
-    - 15%
-    - '15 %'
-    - 0.15 (si jamais)
-    """
+def format_date_for_excel(value):
     if pd.isna(value):
         return None
-
-    if isinstance(value, str):
-        v = value.strip().replace("%", "").replace(",", ".")
-        if v == "":
-            return None
-        try:
-            num = float(v)
-        except ValueError:
-            return None
-    else:
-        try:
-            num = float(value)
-        except Exception:
-            return None
-
-    # Si la valeur ressemble à une fraction Excel (0.15 = 15%)
-    if 0 <= num <= 1:
-        return num * 100
-
-    return num
-
-
-def load_extract_dataframe(extract_file):
-    df = pd.read_excel(extract_file, dtype=object)
-    df.columns = [normalize_col_name(c) for c in df.columns]
-
-    mandatory_cols = [NUMBER_COL, PLANNED_END_DATE_COL, RISK_ID_COL, PERCENT_COMPLETE_COL]
-    for col in mandatory_cols:
-        if col not in df.columns:
-            raise ValueError(f"Colonne obligatoire absente dans l'extract : '{col}'")
-
-    df[NUMBER_COL] = df[NUMBER_COL].astype(str).str.strip()
-    df[PLANNED_END_DATE_COL] = pd.to_datetime(df[PLANNED_END_DATE_COL], errors="coerce")
-    df[RISK_ID_COL] = df[RISK_ID_COL].astype(str).str.strip()
-    df["_PercentCompleteNumeric"] = df[PERCENT_COMPLETE_COL].apply(clean_percent_value)
-
-    return df
-
-
-def get_month_targets(base_date=None, nb_months=3):
-    if base_date is None:
-        base_date = datetime.today()
-
-    targets = []
-    year = base_date.year
-    month = base_date.month
-
-    for i in range(nb_months):
-        target_month = month + i
-        target_year = year
-
-        while target_month > 12:
-            target_month -= 12
-            target_year += 1
-
-        targets.append(
-            (
-                target_year,
-                target_month,
-                FRENCH_MONTHS[target_month],
-                ENGLISH_MONTHS[target_month],
-            )
-        )
-
-    return targets
-
-
-def find_sheet_case_insensitive(wb, target_name):
-    target_norm = normalize_sheet_name(target_name)
-    for sheet_name in wb.sheetnames:
-        if normalize_sheet_name(sheet_name) == target_norm:
-            return wb[sheet_name]
-    return None
-
-
-def get_header_map(ws):
-    header_map = {}
-    for col_idx in range(1, ws.max_column + 1):
-        value = ws.cell(row=1, column=col_idx).value
-        if value is not None:
-            header_map[normalize_col_name(value)] = col_idx
-    return header_map
-
-
-def ws_headers(ws):
-    headers = []
-    for col_idx in range(1, ws.max_column + 1):
-        headers.append(normalize_col_name(ws.cell(row=1, column=col_idx).value))
-    return headers
-
-
-def read_sheet_as_dataframe(ws):
-    data = list(ws.values)
-    if not data:
-        return pd.DataFrame()
-
-    headers = [normalize_col_name(c) for c in data[0]]
-    rows = data[1:]
-    return pd.DataFrame(rows, columns=headers)
-
-
-def month_filter(df, year, month):
-    return df[
-        (df[PLANNED_END_DATE_COL].dt.year == year) &
-        (df[PLANNED_END_DATE_COL].dt.month == month)
-    ].copy()
-
-
-# ============================================================
-# HELPERS STYLES / FORMAT EXCEL
-# ============================================================
-
-def copy_cell_style(source_cell, target_cell):
-    if source_cell.has_style:
-        target_cell._style = copy(source_cell._style)
-        target_cell.font = copy(source_cell.font)
-        target_cell.fill = copy(source_cell.fill)
-        target_cell.border = copy(source_cell.border)
-        target_cell.alignment = copy(source_cell.alignment)
-        target_cell.number_format = copy(source_cell.number_format)
-        target_cell.protection = copy(source_cell.protection)
-
-
-def copy_column_style(ws, source_col_idx, target_col_idx):
-    for row_idx in range(1, ws.max_row + 1):
-        source_cell = ws.cell(row=row_idx, column=source_col_idx)
-        target_cell = ws.cell(row=row_idx, column=target_col_idx)
-        copy_cell_style(source_cell, target_cell)
-
-    source_letter = get_column_letter(source_col_idx)
-    target_letter = get_column_letter(target_col_idx)
-
-    if source_letter in ws.column_dimensions:
-        ws.column_dimensions[target_letter].width = ws.column_dimensions[source_letter].width
-
-
-def copy_row_style(ws, source_row_idx, target_row_idx):
-    for col_idx in range(1, ws.max_column + 1):
-        source_cell = ws.cell(row=source_row_idx, column=col_idx)
-        target_cell = ws.cell(row=target_row_idx, column=col_idx)
-        copy_cell_style(source_cell, target_cell)
-
-    if source_row_idx in ws.row_dimensions:
-        ws.row_dimensions[target_row_idx].height = ws.row_dimensions[source_row_idx].height
-
-
-def autosize_columns(ws):
-    for col_idx in range(1, ws.max_column + 1):
-        max_length = 0
-        col_letter = get_column_letter(col_idx)
-        for row_idx in range(1, ws.max_row + 1):
-            value = ws.cell(row=row_idx, column=col_idx).value
-            if value is not None:
-                max_length = max(max_length, len(str(value)))
-        current_width = ws.column_dimensions[col_letter].width
-        target_width = min(max_length + 2, 60)
-        if current_width is None or current_width < target_width:
-            ws.column_dimensions[col_letter].width = target_width
-
-
-# ============================================================
-# FEUILLE EXTRACT IPT
-# ============================================================
-
-def clear_worksheet_content(ws):
-    for row in ws.iter_rows():
-        for cell in row:
-            cell.value = None
-
-
-def ensure_extract_sheet(wb, extract_df):
-    if EXTRACT_SHEET_NAME in wb.sheetnames:
-        ws = wb[EXTRACT_SHEET_NAME]
-        clear_worksheet_content(ws)
-    else:
-        ws = wb.create_sheet(EXTRACT_SHEET_NAME)
-
-    export_df = extract_df.drop(columns=["_PercentCompleteNumeric"], errors="ignore")
-
-    for col_idx, col_name in enumerate(export_df.columns, start=1):
-        ws.cell(row=1, column=col_idx, value=col_name)
-
-    for row_idx, row in enumerate(export_df.itertuples(index=False), start=2):
-        for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
-
-    return ws
-
-
-# ============================================================
-# COMMENTAIRES / AJOUTS / FERMETURES
-# ============================================================
-
-def get_or_create_comment_column(ws, comment_header, planned_end_date_col_name):
-    header_map = get_header_map(ws)
-
-    if comment_header in header_map:
-        return header_map[comment_header]
-
-    if planned_end_date_col_name not in header_map:
-        raise ValueError(
-            f"La feuille '{ws.title}' ne contient pas la colonne '{planned_end_date_col_name}'"
-        )
-
-    planned_col_idx = header_map[planned_end_date_col_name]
-    insert_at = planned_col_idx + 1
-
-    ws.insert_cols(insert_at)
-    copy_column_style(ws, planned_col_idx, insert_at)
-    ws.cell(row=1, column=insert_at, value=comment_header)
-
-    return insert_at
-
-
-def append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr):
-    header_map = get_header_map(ws)
-
-    if NUMBER_COL not in header_map:
-        raise ValueError(f"La feuille '{ws.title}' ne contient pas la colonne '{NUMBER_COL}'")
-
-    sheet_df = read_sheet_as_dataframe(ws)
-    if NUMBER_COL in sheet_df.columns:
-        existing_numbers = set(
-            sheet_df[NUMBER_COL].dropna().astype(str).str.strip().tolist()
-        )
-    else:
-        existing_numbers = set()
-
-    extract_subset = extract_subset.copy()
-    extract_subset[NUMBER_COL] = extract_subset[NUMBER_COL].astype(str).str.strip()
-
-    to_add = extract_subset[~extract_subset[NUMBER_COL].isin(existing_numbers)].copy()
-
-    if to_add.empty:
-        return 0
-
-    common_cols = [col for col in ws_headers(ws) if col in to_add.columns]
-
-    added_count = 0
-    style_template_row = ws.max_row if ws.max_row >= 2 else None
-
-    for _, row in to_add.iterrows():
-        new_row_idx = ws.max_row + 1
-
-        if style_template_row is not None and style_template_row >= 2:
-            copy_row_style(ws, style_template_row, new_row_idx)
-
-        for col_name in common_cols:
-            if col_name in header_map:
-                ws.cell(row=new_row_idx, column=header_map[col_name], value=row[col_name])
-
-        ws.cell(
-            row=new_row_idx,
-            column=comment_col_idx,
-            value=f"Postponed to {month_name_fr}"
-        )
-
-        added_count += 1
-
-    return added_count
-
-
-def mark_closed_ipts(ws, extract_subset, comment_col_idx):
-    header_map = get_header_map(ws)
-
-    if NUMBER_COL not in header_map:
-        raise ValueError(f"La feuille '{ws.title}' ne contient pas la colonne '{NUMBER_COL}'")
-
-    sheet_number_col = header_map[NUMBER_COL]
-
-    extract_numbers = set(
-        extract_subset[NUMBER_COL].dropna().astype(str).str.strip().tolist()
+    try:
+        return pd.to_datetime(value)
+    except Exception:
+        return None
+
+
+def format_date_for_ppt(value):
+    if pd.isna(value) or value is None:
+        return "N/A"
+    try:
+        dt = pd.to_datetime(value)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return str(value)
+
+
+def safe_text(value, default="N/A"):
+    if value is None or pd.isna(value):
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def compute_metrics(
+    input_file="all_ipt.xlsx",
+    excel_output="ipt_metrics.xlsx",
+    ppt_output="ipt_progress_report.pptx"
+):
+    # Lecture source
+    ipt_all = pd.read_excel(input_file)
+
+    # Normalisation minimale des colonnes attendues
+    expected_columns = [
+        "State",
+        "Local risk reference",
+        "Percent Complete",
+        "Planned end date",
+        "Risk Owner/Sponsor",
+        "Residual risk level",
+        "Title",
+    ]
+    missing = [c for c in expected_columns if c not in ipt_all.columns]
+    if missing:
+        raise ValueError(f"Colonnes manquantes dans le fichier source: {missing}")
+
+    # Conversion types
+    ipt_all["Percent Complete"] = pd.to_numeric(
+        ipt_all["Percent Complete"], errors="coerce"
+    ).fillna(0)
+
+    ipt_all["Planned end date"] = pd.to_datetime(
+        ipt_all["Planned end date"], errors="coerce"
     )
 
-    closed_count = 0
-    for row_idx in range(2, ws.max_row + 1):
-        sheet_number = ws.cell(row=row_idx, column=sheet_number_col).value
-        if sheet_number is None:
-            continue
+    # Split open / closed
+    ipt_closed = ipt_all[ipt_all["State"] == "Closed Complete"].copy()
+    ipt_open = ipt_all[ipt_all["State"] != "Closed Complete"].copy()
 
-        sheet_number = str(sheet_number).strip()
-        if sheet_number not in extract_numbers:
-            ws.cell(row=row_idx, column=comment_col_idx, value="Closed")
-            closed_count += 1
+    # Liste des RL
+    rls_closed = set(ipt_closed["Local risk reference"].dropna().unique())
+    rls_open = set(ipt_open["Local risk reference"].dropna().unique())
+    all_rls = sorted(rls_closed.union(rls_open))
 
-    return closed_count
+    results = {}
+
+    for rl in all_rls:
+        closed_subset = ipt_closed[ipt_closed["Local risk reference"] == rl]
+        open_subset = ipt_open[ipt_open["Local risk reference"] == rl]
+
+        closed_count = closed_subset.shape[0]
+        open_count = open_subset.shape[0]
+        total = closed_count + open_count
+
+        # Progression moyenne :
+        # - actions closed = 100
+        # - actions open = valeur Percent Complete
+        completions_open = open_subset["Percent Complete"].tolist()
+        completions_closed = [100] * closed_count
+        all_completions = completions_open + completions_closed
+        avg_completion = round(sum(all_completions) / len(all_completions), 2) if all_completions else 0
+
+        # Ratio open actions type 11/45
+        ratio_open = f"{open_count}/{total}" if total > 0 else "0/0"
+
+        # Latest planned end date uniquement sur open
+        planned_dates = open_subset["Planned end date"].dropna()
+        latest_planned_end_date = planned_dates.max() if not planned_dates.empty else None
+
+        # Sample row pour récupérer des infos stables
+        sample_row = pd.concat([open_subset, closed_subset], ignore_index=True).head(1)
+
+        risk_owner = safe_text(
+            sample_row["Risk Owner/Sponsor"].iloc[0] if not sample_row.empty else None
+        )
+        residual_level = safe_text(
+            sample_row["Residual risk level"].iloc[0] if not sample_row.empty else None
+        )
+        title = safe_text(
+            sample_row["Title"].iloc[0] if not sample_row.empty else rl
+        )
+
+        results[rl] = {
+            "Local risk reference": rl,
+            "Title": title,
+            "Open actions ratio": ratio_open,
+            "Average completion rate (%)": avg_completion,
+            "Latest planned end date": latest_planned_end_date,
+            "Risk Owner/Sponsor": risk_owner,
+            "Residual risk level": residual_level,
+        }
+
+    df_results = pd.DataFrame.from_dict(results, orient="index").reset_index(drop=True)
+
+    # Export Excel
+    with pd.ExcelWriter(excel_output, engine="openpyxl") as writer:
+        df_results.to_excel(writer, sheet_name="Metrics", index=False)
+
+    # Export PowerPoint
+    create_progress_ppt(df_results, ppt_output)
+
+    print(f"Excel généré : {excel_output}")
+    print(f"PowerPoint généré : {ppt_output}")
+
+    return df_results
 
 
-# ============================================================
-# SYNTHÈSE MENSUELLE
-# ============================================================
+def add_textbox(slide, left, top, width, height, text,
+                font_size=12, bold=False,
+                font_color=RGBColor(0, 0, 0),
+                align=PP_ALIGN.LEFT,
+                vertical_anchor=MSO_VERTICAL_ANCHOR.MIDDLE):
+    textbox = slide.shapes.add_textbox(left, top, width, height)
+    text_frame = textbox.text_frame
+    text_frame.clear()
+    text_frame.word_wrap = True
+    text_frame.vertical_anchor = vertical_anchor
 
-def build_month_summary_row(extract_subset, month_name_en, status_label):
-    total_ipts = len(extract_subset)
+    p = text_frame.paragraphs[0]
+    p.alignment = align
+    run = p.add_run()
+    run.text = str(text)
+    run.font.size = Pt(font_size)
+    run.font.bold = bold
+    run.font.color.rgb = font_color
 
-    risk_ids = (
-        extract_subset[RISK_ID_COL]
-        .dropna()
-        .astype(str)
-        .str.strip()
-    )
-    risk_ids = risk_ids[risk_ids != ""]
-    distinct_risk_ids = risk_ids.nunique()
-
-    pct = extract_subset["_PercentCompleteNumeric"]
-
-    lt_50 = pct.apply(lambda x: x is not None and pd.notna(x) and x < 50).sum()
-    eq_0 = pct.apply(lambda x: x is not None and pd.notna(x) and x == 0).sum()
-
-    return {
-        "Status": status_label,
-        "Month": month_name_en,
-        "IPTs on RLs": f"{total_ipts} IPTs on {distinct_risk_ids} RLs",
-        "IPTs <50%": f"{lt_50} IPTs <50%",
-        "IPTs = 0%": f"Dont {eq_0} IPTs = 0%",
-        "Total IPTs": total_ipts,
-        "Distinct Risk IDs": distinct_risk_ids,
-        "IPTs Percent < 50": int(lt_50),
-        "IPTs Percent = 0": int(eq_0),
-    }
+    return textbox
 
 
-def write_summary_excel(summary_rows, output_file):
-    df = pd.DataFrame(summary_rows)
+def create_progress_ppt(df, output_file):
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)   # format 16:9
+    prs.slide_height = Inches(7.5)
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Summary"
+    rows_per_slide = 10
 
-    headers = list(df.columns)
-    for col_idx, header in enumerate(headers, start=1):
-        ws.cell(row=1, column=col_idx, value=header)
+    # Layout
+    title_top = Inches(0.25)
+    title_left = Inches(0.4)
 
-    for row_idx, row in enumerate(df.itertuples(index=False), start=2):
-        for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
+    first_row_top = Inches(1.0)
+    row_height = Inches(0.56)
 
-    autosize_columns(ws)
-    wb.save(output_file)
+    label_left = Inches(0.45)
+    label_width = Inches(6.0)
 
+    bar_left = Inches(6.25)
+    bar_width = Inches(4.8)
+    bar_height = Inches(0.28)
 
-# ============================================================
-# MAIN
-# ============================================================
+    date_left = Inches(11.2)
+    date_width = Inches(1.6)
 
-def main():
-    today = datetime.today()
-    day_str = str(today.day)
-    month_name_today_fr = FRENCH_MONTHS[today.month]
-    comment_header = f"Comments {day_str} {month_name_today_fr}"
-    status_label = f"Status {today.year} {ENGLISH_MONTHS[today.month]} {today.day:02d}"
+    # Couleurs
+    bar_bg_color = RGBColor(230, 230, 230)
+    bar_fill_color = RGBColor(0, 176, 80)
+    text_dark = RGBColor(0, 0, 0)
+    text_light = RGBColor(255, 255, 255)
+    teal_line = RGBColor(0, 153, 153)
 
-    extract_path = Path(EXTRACT_FILE)
-    tracking_path = Path(TRACKING_FILE)
+    total_rows = len(df)
+    total_slides = max(1, math.ceil(total_rows / rows_per_slide))
 
-    if not extract_path.exists():
-        raise FileNotFoundError(f"Fichier extract introuvable : {EXTRACT_FILE}")
-    if not tracking_path.exists():
-        raise FileNotFoundError(f"Fichier de suivi introuvable : {TRACKING_FILE}")
+    for slide_index in range(total_slides):
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-    extract_df = load_extract_dataframe(EXTRACT_FILE)
-    wb = load_workbook(TRACKING_FILE)
+        # Titre slide
+        add_textbox(
+            slide,
+            title_left,
+            title_top,
+            Inches(6),
+            Inches(0.4),
+            f"Action Plans Progress - Part {slide_index + 1}",
+            font_size=20,
+            bold=True,
+            font_color=text_dark
+        )
 
-    # 1) Mise à jour du fichier de suivi
-    ensure_extract_sheet(wb, extract_df)
-    autosize_columns(wb[EXTRACT_SHEET_NAME])
+        # Ligne décorative
+        line = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.4),
+            Inches(0.75),
+            Inches(12.2),
+            Inches(0.04)
+        )
+        line.fill.solid()
+        line.fill.fore_color.rgb = teal_line
+        line.line.fill.background()
 
-    # 2) Traitement mois courant + 2 mois suivants
-    targets = get_month_targets(today, nb_months=3)
-    summary = []
-    summary_rows = []
+        start = slide_index * rows_per_slide
+        end = min(start + rows_per_slide, total_rows)
+        df_chunk = df.iloc[start:end]
 
-    for year, month_num, month_name_fr, month_name_en in targets:
-        ws = find_sheet_case_insensitive(wb, month_name_fr)
+        for i, (_, row) in enumerate(df_chunk.iterrows()):
+            current_top = first_row_top + i * row_height
 
-        extract_subset = month_filter(extract_df, year, month_num)
+            title_text = safe_text(row.get("Title", "N/A"))
+            progress = float(row.get("Average completion rate (%)", 0) or 0)
+            progress = max(0, min(100, progress))
+            planned_end_date = format_date_for_ppt(row.get("Latest planned end date"))
 
-        # construire la synthèse même si la feuille mensuelle n'existe pas
-        summary_rows.append(
-            build_month_summary_row(
-                extract_subset=extract_subset,
-                month_name_en=month_name_en,
-                status_label=status_label,
+            # Titre
+            add_textbox(
+                slide,
+                label_left,
+                current_top,
+                label_width,
+                Inches(0.38),
+                title_text,
+                font_size=11,
+                bold=False,
+                font_color=text_dark,
+                align=PP_ALIGN.LEFT
             )
-        )
 
-        if ws is None:
-            summary.append(f"[WARNING] Feuille '{month_name_fr}' absente, mois ignoré pour le suivi.")
-            continue
+            # Fond barre
+            bg_bar = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                bar_left,
+                current_top + Inches(0.03),
+                bar_width,
+                bar_height
+            )
+            bg_bar.fill.solid()
+            bg_bar.fill.fore_color.rgb = bar_bg_color
+            bg_bar.line.fill.background()
 
-        comment_col_idx = get_or_create_comment_column(
-            ws,
-            comment_header=comment_header,
-            planned_end_date_col_name=PLANNED_END_DATE_COL,
-        )
+            # Barre progression
+            progress_width = max(Inches(0.01), bar_width * (progress / 100.0))
+            fg_bar = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                bar_left,
+                current_top + Inches(0.03),
+                progress_width,
+                bar_height
+            )
+            fg_bar.fill.solid()
+            fg_bar.fill.fore_color.rgb = bar_fill_color
+            fg_bar.line.fill.background()
 
-        added = append_new_ipts(ws, extract_subset, comment_col_idx, month_name_fr)
-        closed = mark_closed_ipts(ws, extract_subset, comment_col_idx)
+            # Pourcentage à l'intérieur de la barre
+            # centré dans toute la zone de barre pour rester lisible
+            percent_text = f"{progress:.2f}".rstrip("0").rstrip(".") + "%"
+            add_textbox(
+                slide,
+                bar_left,
+                current_top + Inches(0.01),
+                bar_width,
+                Inches(0.32),
+                percent_text,
+                font_size=10,
+                bold=True,
+                font_color=text_light if progress >= 15 else text_dark,
+                align=PP_ALIGN.CENTER
+            )
 
-        autosize_columns(ws)
+            # Date à droite
+            add_textbox(
+                slide,
+                date_left,
+                current_top,
+                date_width,
+                Inches(0.38),
+                planned_end_date,
+                font_size=10,
+                bold=False,
+                font_color=text_dark,
+                align=PP_ALIGN.LEFT
+            )
 
-        summary.append(
-            f"[OK] Feuille '{ws.title}' : {len(extract_subset)} IPT dans l'extract, "
-            f"{added} ajoutée(s), {closed} marquée(s) Closed."
-        )
-
-    wb.save(OUTPUT_FILE)
-
-    # 3) Export fichier de synthèse
-    write_summary_excel(summary_rows, SUMMARY_FILE)
-
-    print("Traitement terminé.")
-    print(f"Fichier de suivi généré : {OUTPUT_FILE}")
-    print(f"Fichier de synthèse généré : {SUMMARY_FILE}")
-    print("\nRésumé :")
-    for line in summary:
-        print(line)
+    prs.save(output_file)
 
 
 if __name__ == "__main__":
-    main()
+    compute_metrics(
+        input_file="all_ipt.xlsx",
+        excel_output="ipt_metrics.xlsx",
+        ppt_output="ipt_progress_report.pptx"
+    )
