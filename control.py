@@ -25,6 +25,13 @@ def safe_text(value, default="N/A"):
     return text if text else default
 
 
+def clean_title(value):
+    text = safe_text(value, default="N/A")
+    if text.upper().startswith("BP2I-"):
+        return text[5:].strip()
+    return text
+
+
 def add_textbox(
     slide,
     left,
@@ -56,13 +63,17 @@ def add_textbox(
 
 
 def compute_metrics(
-    input_file="all_ipt.xlsx",
+    ipt_input_file="all_ipt.xlsx",
+    risk_cards_input_file="risk_cards_extract.xlsx",
     excel_output="ipt_metrics.xlsx",
     ppt_output="ipt_progress_report.pptx",
 ):
-    ipt_all = pd.read_excel(input_file)
+    # =========================
+    # Lecture IPT
+    # =========================
+    ipt_all = pd.read_excel(ipt_input_file)
 
-    expected_columns = [
+    expected_ipt_columns = [
         "State",
         "Local risk reference",
         "Percent Complete",
@@ -71,9 +82,11 @@ def compute_metrics(
         "Residual risk level",
         "Title",
     ]
-    missing = [c for c in expected_columns if c not in ipt_all.columns]
-    if missing:
-        raise ValueError(f"Colonnes manquantes dans le fichier source: {missing}")
+    missing_ipt = [c for c in expected_ipt_columns if c not in ipt_all.columns]
+    if missing_ipt:
+        raise ValueError(
+            f"Colonnes manquantes dans le fichier IPT source: {missing_ipt}"
+        )
 
     ipt_all["Percent Complete"] = pd.to_numeric(
         ipt_all["Percent Complete"], errors="coerce"
@@ -92,6 +105,9 @@ def compute_metrics(
 
     results = {}
 
+    # =========================
+    # Construction métriques IPT
+    # =========================
     for rl in all_rls:
         closed_subset = ipt_closed[ipt_closed["Local risk reference"] == rl]
         open_subset = ipt_open[ipt_open["Local risk reference"] == rl]
@@ -124,9 +140,12 @@ def compute_metrics(
         residual_level = safe_text(
             sample_row["Residual risk level"].iloc[0] if not sample_row.empty else None
         )
-        title = safe_text(sample_row["Title"].iloc[0] if not sample_row.empty else rl)
+        title = clean_title(
+            sample_row["Title"].iloc[0] if not sample_row.empty else rl
+        )
 
-        results[rl] = {
+        results[f"IPT::{rl}"] = {
+            "Source Type": "IPT",
             "Local risk reference": rl,
             "Title": title,
             "Open actions ratio": ratio_open,
@@ -134,13 +153,61 @@ def compute_metrics(
             "Latest planned end date": latest_planned_end_date,
             "Risk Owner/Sponsor": risk_owner,
             "Residual risk level": residual_level,
+            "Bar Label": f"{avg_completion:.2f}".rstrip("0").rstrip(".") + "%",
+            "Is Acceptance": False,
         }
 
+    # =========================
+    # Lecture Risk Cards
+    # =========================
+    risk_cards = pd.read_excel(risk_cards_input_file)
+
+    expected_rc_columns = ["Response", "Title"]
+    missing_rc = [c for c in expected_rc_columns if c not in risk_cards.columns]
+    if missing_rc:
+        raise ValueError(
+            f"Colonnes manquantes dans le fichier Risk Cards: {missing_rc}"
+        )
+
+    # Filtre Response = Accept
+    risk_cards_accept = risk_cards[
+        risk_cards["Response"].astype(str).str.strip().str.lower() == "accept"
+    ].copy()
+
+    # Ajout des risk cards acceptance dans les résultats
+    for idx, row in risk_cards_accept.reset_index(drop=True).iterrows():
+        title = clean_title(row["Title"])
+
+        results[f"RC::{idx+1}::{title}"] = {
+            "Source Type": "Risk Card Acceptance",
+            "Local risk reference": "N/A",
+            "Title": title,
+            "Open actions ratio": "N/A",
+            "Average completion rate (%)": 0,
+            "Latest planned end date": None,
+            "Risk Owner/Sponsor": "N/A",
+            "Residual risk level": "N/A",
+            "Bar Label": "Acceptance",
+            "Is Acceptance": True,
+        }
+
+    # =========================
+    # DataFrame final
+    # =========================
     df_results = pd.DataFrame.from_dict(results, orient="index").reset_index(drop=True)
 
+    # Tri optionnel : d'abord IPT puis Risk Cards
+    source_order = {"IPT": 0, "Risk Card Acceptance": 1}
+    df_results["__sort_order"] = df_results["Source Type"].map(source_order).fillna(99)
+    df_results = df_results.sort_values(
+        by=["__sort_order", "Title"], ascending=[True, True]
+    ).drop(columns="__sort_order").reset_index(drop=True)
+
+    # Export Excel
     with pd.ExcelWriter(excel_output, engine="openpyxl") as writer:
         df_results.to_excel(writer, sheet_name="Metrics", index=False)
 
+    # Export PPT
     create_progress_ppt(df_results, ppt_output)
 
     print(f"Excel généré : {excel_output}")
@@ -217,11 +284,13 @@ def create_progress_ppt(df, output_file):
         for i, (_, row) in enumerate(df_chunk.iterrows()):
             current_top = first_row_top + i * row_height
 
-            title_text = safe_text(row.get("Title", "N/A"))
+            title_text = clean_title(row.get("Title", "N/A"))
             progress = float(row.get("Average completion rate (%)", 0) or 0)
             progress = max(0, min(100, progress))
-            ratio_text = safe_text(row.get("Open actions ratio", "0/0"))
+            ratio_text = safe_text(row.get("Open actions ratio", "N/A"))
             planned_end_date = format_date_for_ppt(row.get("Latest planned end date"))
+            bar_label = safe_text(row.get("Bar Label", ""))
+            is_acceptance = bool(row.get("Is Acceptance", False))
 
             add_textbox(
                 slide,
@@ -236,6 +305,7 @@ def create_progress_ppt(df, output_file):
                 align=PP_ALIGN.LEFT,
             )
 
+            # Fond de barre
             bg_bar = slide.shapes.add_shape(
                 MSO_SHAPE.ROUNDED_RECTANGLE,
                 bar_left,
@@ -247,32 +317,35 @@ def create_progress_ppt(df, output_file):
             bg_bar.fill.fore_color.rgb = bar_bg_color
             bg_bar.line.fill.background()
 
-            progress_width = max(Inches(0.01), bar_width * (progress / 100.0))
-            fg_bar = slide.shapes.add_shape(
-                MSO_SHAPE.ROUNDED_RECTANGLE,
-                bar_left,
-                current_top + Inches(0.03),
-                progress_width,
-                bar_height,
-            )
-            fg_bar.fill.solid()
-            fg_bar.fill.fore_color.rgb = bar_fill_color
-            fg_bar.line.fill.background()
+            # Barre de progression seulement pour les IPT
+            if not is_acceptance:
+                progress_width = max(Inches(0.01), bar_width * (progress / 100.0))
+                fg_bar = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    bar_left,
+                    current_top + Inches(0.03),
+                    progress_width,
+                    bar_height,
+                )
+                fg_bar.fill.solid()
+                fg_bar.fill.fore_color.rgb = bar_fill_color
+                fg_bar.line.fill.background()
 
-            percent_text = f"{progress:.2f}".rstrip("0").rstrip(".") + "%"
+            # Texte dans la barre
             add_textbox(
                 slide,
                 bar_left,
                 current_top + Inches(0.01),
                 bar_width,
                 Inches(0.32),
-                percent_text,
+                bar_label,
                 font_size=10,
                 bold=True,
-                font_color=text_light if progress >= 15 else text_dark,
+                font_color=text_dark if is_acceptance else (text_light if progress >= 15 else text_dark),
                 align=PP_ALIGN.CENTER,
             )
 
+            # Ratio
             add_textbox(
                 slide,
                 ratio_left,
@@ -286,6 +359,7 @@ def create_progress_ppt(df, output_file):
                 align=PP_ALIGN.CENTER,
             )
 
+            # Date
             add_textbox(
                 slide,
                 date_left,
@@ -304,7 +378,8 @@ def create_progress_ppt(df, output_file):
 
 if __name__ == "__main__":
     compute_metrics(
-        input_file="all_ipt.xlsx",
+        ipt_input_file="all_ipt.xlsx",
+        risk_cards_input_file="risk_cards_extract.xlsx",
         excel_output="ipt_metrics.xlsx",
         ppt_output="ipt_progress_report.pptx",
     )
