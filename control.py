@@ -1,123 +1,65 @@
 import dataiku
 import pandas as pd
+import spacy
+from spacy.lang.en.stop_words import STOP_WORDS as SPACY_STOPWORDS
 
-# ============================================================================
-# Read the three input datasets
-# ============================================================================
-main_df = dataiku.Dataset("incidents_text_normalized").get_dataframe()
-fr_df = dataiku.Dataset("incidents_translated_fr").get_dataframe()
-it_df = dataiku.Dataset("incidents_translated_it").get_dataframe()
+# Load English spaCy model (already installed earlier).
+# Parser enabled because for your long texts, sentence-aware tokenization
+# produces better lemmas than parser-disabled mode.
+nlp = spacy.load("en_core_web_sm", disable=["ner"])
 
-print(f"Main dataset: {len(main_df)} rows")
-print(f"FR translations: {len(fr_df)} rows")
-print(f"IT translations: {len(it_df)} rows")
+input_ds = dataiku.Dataset("incidents_nlp_cleaned_regex")
+df = input_ds.get_dataframe()
 
-# ============================================================================
-# Standardize incident_id as string in all datasets (avoid join surprises)
-# ============================================================================
-main_df["incident_id"] = main_df["incident_id"].astype(str).str.strip()
-fr_df["incident_id"] = fr_df["incident_id"].astype(str).str.strip()
-it_df["incident_id"] = it_df["incident_id"].astype(str).str.strip()
+# Custom stop-words: start empty. After the first run, look at top-50 token
+# frequencies and add any high-frequency non-discriminative words.
+# Don't pre-remove OpRisk vocabulary like "client", "loss", "incident" —
+# they may genuinely define clusters.
+custom_stopwords = set()
+stopwords = SPACY_STOPWORDS | custom_stopwords
 
-# ============================================================================
-# RENAME the translated text column in each FR/IT dataset to a common name
-# ⚠️ ADJUST 'translated_text' to whatever your column is actually called
-# ============================================================================
-TRANSLATED_COL_NAME_FR = "translated_text"  # ← change to actual column name
-TRANSLATED_COL_NAME_IT = "translated_text"  # ← change to actual column name
+MIN_TOKEN_LEN = 3
 
-fr_df = fr_df[["incident_id", TRANSLATED_COL_NAME_FR]].rename(
-    columns={TRANSLATED_COL_NAME_FR: "translation_from_fr"}
-)
-it_df = it_df[["incident_id", TRANSLATED_COL_NAME_IT]].rename(
-    columns={TRANSLATED_COL_NAME_IT: "translation_from_it"}
-)
 
-# ============================================================================
-# Sanity checks before merge
-# ============================================================================
-assert fr_df["incident_id"].is_unique, "Duplicate IDs in FR translations"
-assert it_df["incident_id"].is_unique, "Duplicate IDs in IT translations"
+def clean_long_text(text_series, batch_size=100):
+    """Lemmatize + remove stop-words on long English texts using spaCy."""
+    texts = text_series.fillna("").astype(str).tolist()
+    cleaned = []
+    for doc in nlp.pipe(texts, batch_size=batch_size):
+        tokens = []
+        for t in doc:
+            if t.is_stop or t.is_punct or t.is_space:
+                continue
+            lemma = t.lemma_.lower().strip()
+            if not lemma or lemma in stopwords:
+                continue
+            if len(lemma) < MIN_TOKEN_LEN:
+                continue
+            if lemma.isdigit():
+                continue
+            tokens.append(lemma)
+        cleaned.append(" ".join(tokens))
+    return cleaned
 
-# Confirm FR translations match FR-detected rows in main
-fr_ids_in_main = set(main_df[main_df["lang_detected"] == "fr"]["incident_id"])
-fr_ids_translated = set(fr_df["incident_id"])
-missing_fr = fr_ids_in_main - fr_ids_translated
-extra_fr = fr_ids_translated - fr_ids_in_main
-if missing_fr:
-    print(f"⚠️ {len(missing_fr)} FR incidents have no translation (will be excluded)")
-if extra_fr:
-    print(f"⚠️ {len(extra_fr)} translations have no matching FR incident in main")
 
-# Same for IT
-it_ids_in_main = set(main_df[main_df["lang_detected"] == "it"]["incident_id"])
-it_ids_translated = set(it_df["incident_id"])
-missing_it = it_ids_in_main - it_ids_translated
-extra_it = it_ids_translated - it_ids_in_main
-if missing_it:
-    print(f"⚠️ {len(missing_it)} IT incidents have no translation")
-if extra_it:
-    print(f"⚠️ {len(extra_it)} IT translations have no matching incident")
+# Apply to the English text column
+df["incident_description_cleaned"] = clean_long_text(df["incident_description_en"])
 
-# ============================================================================
-# Left-join the translations onto the main dataset
-# Left join preserves all rows from main, fills NaN where no translation exists
-# ============================================================================
-merged = main_df.merge(fr_df, on="incident_id", how="left")
-merged = merged.merge(it_df, on="incident_id", how="left")
+# Diagnostics
+df["cleaned_char_len"] = df["incident_description_cleaned"].str.len()
+df["cleaned_word_count"] = df["incident_description_cleaned"].str.split().str.len().fillna(0).astype(int)
+df["cleaned_is_empty"] = df["cleaned_char_len"] == 0
 
-# ============================================================================
-# Build the unified English column with clear priority rules:
-#   1. If language was already English → keep the HTML-cleaned original
-#   2. If language was French → use the FR translation
-#   3. If language was Italian → use the IT translation
-#   4. Otherwise (negligible other languages, unknown) → empty, will be excluded
-# ============================================================================
-def pick_english_text(row):
-    lang = row["lang_detected"]
-    if lang == "en":
-        return row["incident_description_no_html"]
-    elif lang == "fr":
-        translated = row.get("translation_from_fr")
-        return translated if isinstance(translated, str) and translated.strip() else ""
-    elif lang == "it":
-        translated = row.get("translation_from_it")
-        return translated if isinstance(translated, str) and translated.strip() else ""
-    else:
-        return ""  # Spanish, unknown, etc. — excluded as agreed
-
-merged["incident_description_en"] = merged.apply(pick_english_text, axis=1)
-
-# ============================================================================
-# Tracking columns for transparency and downstream filtering
-# ============================================================================
-merged["was_translated"] = merged["lang_detected"].isin(["fr", "it"]) & (
-    merged["incident_description_en"].str.len() > 0
-)
-merged["excluded_from_clustering"] = (
-    (merged["incident_description_en"].str.len() == 0) |
-    (~merged["lang_detected"].isin(["en", "fr", "it"]))
+# Token reduction ratio — sanity-check the cleaning isn't too aggressive
+df["token_reduction_ratio"] = (
+    df["cleaned_word_count"] / df["regex_cleaned_word_count"].replace(0, 1)
 )
 
-# Drop the intermediate translation columns — they served their purpose
-merged = merged.drop(columns=["translation_from_fr", "translation_from_it"])
-
-# ============================================================================
 # Summary
-# ============================================================================
-print(f"\n{'='*50}")
-print(f"Total rows: {len(merged)}")
-print(f"English passthrough: {(merged['lang_detected'] == 'en').sum()}")
-print(f"FR translated and used: {((merged['lang_detected'] == 'fr') & (merged['incident_description_en'].str.len() > 0)).sum()}")
-print(f"IT translated and used: {((merged['lang_detected'] == 'it') & (merged['incident_description_en'].str.len() > 0)).sum()}")
-print(f"Excluded from clustering: {merged['excluded_from_clustering'].sum()}")
+print(f"Total rows: {len(df)}")
+print(f"Empty after cleaning: {df['cleaned_is_empty'].sum()}")
+print(f"Median cleaned word count: {df['cleaned_word_count'].median()}")
+print(f"Mean token reduction ratio: {df['token_reduction_ratio'].mean():.2f}")
 
-# Critical integrity check
-assert len(merged) == len(main_df), "Row count changed during merge — investigate"
-
-# ============================================================================
-# Write output
-# ============================================================================
-output_ds = dataiku.Dataset("incidents_translated")
-output_ds.write_with_schema(merged)
-print("\nDone.")
+output_ds = dataiku.Dataset("incidents_nlp_cleaned_final")
+output_ds.write_with_schema(df)
