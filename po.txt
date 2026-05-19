@@ -1,13 +1,30 @@
-Where I started
-From the joined incident-level dataset (incidents + aggregated causes + aggregated consequences, one row per incident).
-What I did
-Strategy decision on the text corpus. I initially planned to merge the three text fields (incident description, causes, consequences) into a single corpus for clustering. After looking at the length distributions, I changed direction: incident descriptions average ~900 characters while causes and consequences are typically one short sentence each. Merging them would have buried the cause/consequence signal in the longer incident text. Decision: cluster on incident description only, and keep the causes/consequences as structured metadata for cluster validation later (similar to how the reference paper uses Basel event types).
-HTML stripping. Incident descriptions contain HTML tags from the source system. Built a cleaning step using BeautifulSoup, then had to add a fix: some descriptions use <<...>> as quotation markers, which the parser was wrongly interpreting as HTML tags and stripping. I added a pre-processing step to neutralize these false-positive patterns before parsing.
-Language detection. Discovered the corpus is multilingual: ~49% English, ~44% French, ~7% Italian, plus a negligible tail. This rules out an English-only approach (we'd lose half the data) and forces us to translate everything to English so we can cluster on a unified semantic space.
-Current bottleneck — translation
-Translation is where I'm stuck. Two options were on the table:
+Subject: Weekly update — text cleaning complete, vectorization done, next step planned
 
-External APIs (DeepL, Google Translate): highest quality and easiest to set up, but sending incident descriptions to external services isn't acceptable from a data governance standpoint in a bank context.
-Local model (Helsinki-NLP MarianMT): runs entirely on the Dataiku server, no external calls — the right choice for us. However, the standard install requires downloading the models from Hugging Face, and outbound access to Hugging Face is blocked from our environment.
+Hi [Manager],
 
-I'm currently working around this by downloading the three models (FR→EN, IT→EN, ES→EN) on a machine with internet access, then uploading them as a Dataiku managed folder for the recipe to load offline. Setup is in progress.
+Quick update on progress since the support team installed the spaCy English model.
+
+**Text cleaning (Stages 3 and 4)**
+
+With spaCy in place, I ran the full lemmatization and stop-word removal pass on the 10,039 incident descriptions. The cleaning pipeline now does, in order: HTML stripping, language detection (with French and Italian translated to English via the internal tool), lowercase normalization, accent removal, punctuation/digit removal, then spaCy lemmatization with stop-word filtering. I went through one iteration of refinement after noticing alphanumeric noise tokens like "10k euro" and "11th" appearing in the vocabulary — added a regex step to strip alphanumeric tokens containing digits and reran. The cleaned corpus now contains clean OpRisk vocabulary.
+
+**Vectorization — TF and TF-IDF in parallel (Stage 5)**
+
+I built both the Term Frequency (TF) and TF-IDF document-by-term matrices rather than committing to one. The paper uses TF only because their descriptions were short (~250 characters), where IDF scaling hurt cluster quality. Our descriptions are longer (~900 characters average, up to 4000), which generally benefits from IDF down-weighting of common terms. Since we can't predict in advance which is better for our specific corpus, running both lets cluster quality decide later — same approach the paper itself uses to validate its TF choice (their Figure 11).
+
+**Configuration choices.** For both matrices I used: minimum document frequency of 10 (a term must appear in at least 10 incidents to be included — filters out one-off noise), maximum document frequency of 70% (filters out terms appearing in nearly every document — automatic supplement to the stop-word list), and unigrams + bigrams (single words and two-word sequences, to capture multi-word OpRisk concepts like "interest rate" or "credit card"). The resulting vocabulary is ~10,110 terms, which is a healthy size for a corpus of ~10K documents with bigrams enabled.
+
+I verified the vocabulary contains clean OpRisk terminology with bigrams appearing naturally, no leftover alphanumeric noise, and reasonable term frequencies.
+
+**Next step: semantic adjustment (Stage 6)**
+
+The paper's next step uses pre-trained word2vec embeddings to enrich the document-term matrix with semantic similarity — so that "customer" and "client" are treated as related rather than as completely different terms. This typically improves cluster quality, particularly for OpRisk text where the same concept appears in different phrasings.
+
+The pre-trained embeddings used in the paper are distributed externally, so I'll hit the same install blocker we had with spaCy and the translation models. **Plan:** I'll raise a ticket with the support team to install a pre-trained English word2vec model for us — this would be the methodologically cleanest path. In parallel, while that request is pending, I'll train a word2vec model on our own 10K-incident corpus using `gensim` (a library that installs cleanly via our internal package mirror, no external downloads needed). The corpus-trained model will be smaller and lower-quality than a pre-trained one, but it has a real advantage: it captures *our bank's specific OpRisk vocabulary patterns* rather than general English — the paper itself notes this as a valid extension worth exploring.
+
+This way the project keeps moving without waiting on the support ticket, and we can compare against the pre-trained version once it arrives.
+
+Happy to walk through any of this in more detail.
+
+Best,
+[Your name]
