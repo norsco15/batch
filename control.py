@@ -5,14 +5,16 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from scipy import sparse
 import json
 import os
+import tempfile
+import io
 
 # ============================================================================
-# Configuration — discussed above, change with reason
+# Configuration
 # ============================================================================
-MIN_DF = 5              # drop terms in <5 documents
-MAX_DF = 0.7            # drop terms in >70% of documents
-NGRAM_RANGE = (1, 2)    # unigrams and bigrams
-MAX_FEATURES = 10000    # safety cap on vocabulary size
+MIN_DF = 5
+MAX_DF = 0.7
+NGRAM_RANGE = (1, 2)
+MAX_FEATURES = 10000
 
 # ============================================================================
 # Read input
@@ -23,8 +25,7 @@ df = input_ds.get_dataframe()
 print(f"Input rows: {len(df)}")
 
 # ============================================================================
-# Filter to rows with non-empty cleaned text — excluded rows can't be vectorized
-# We KEEP them in the index dataset so the mapping stays complete, but flag them
+# Filter to rows with non-empty cleaned text
 # ============================================================================
 df["included_in_vectorization"] = (
     df["incident_description_cleaned"].fillna("").str.len() > 0
@@ -33,7 +34,6 @@ df["included_in_vectorization"] = (
 print(f"Rows included in vectorization: {df['included_in_vectorization'].sum()}")
 print(f"Rows excluded (empty cleaned text): {(~df['included_in_vectorization']).sum()}")
 
-# Subset to vectorizable rows
 vectorizable = df[df["included_in_vectorization"]].copy().reset_index(drop=True)
 vectorizable["row_index"] = vectorizable.index
 
@@ -48,8 +48,8 @@ tf_vectorizer = CountVectorizer(
     max_df=MAX_DF,
     ngram_range=NGRAM_RANGE,
     max_features=MAX_FEATURES,
-    lowercase=False,  # already lowercased in cleaning
-    token_pattern=r"(?u)\b\w+\b",  # default-like, but explicit
+    lowercase=False,
+    token_pattern=r"(?u)\b\w+\b",
 )
 tf_matrix = tf_vectorizer.fit_transform(corpus)
 tf_vocabulary = tf_vectorizer.get_feature_names_out().tolist()
@@ -59,7 +59,7 @@ print(f"  TF matrix density: {tf_matrix.nnz / (tf_matrix.shape[0] * tf_matrix.sh
 print(f"  Vocabulary size: {len(tf_vocabulary)}")
 
 # ============================================================================
-# TF-IDF vectorization (same parameters for fair comparison)
+# TF-IDF vectorization
 # ============================================================================
 print("\nBuilding TF-IDF matrix...")
 tfidf_vectorizer = TfidfVectorizer(
@@ -69,7 +69,7 @@ tfidf_vectorizer = TfidfVectorizer(
     max_features=MAX_FEATURES,
     lowercase=False,
     token_pattern=r"(?u)\b\w+\b",
-    sublinear_tf=True,  # log(1 + tf) — common default that handles long docs better
+    sublinear_tf=True,
 )
 tfidf_matrix = tfidf_vectorizer.fit_transform(corpus)
 tfidf_vocabulary = tfidf_vectorizer.get_feature_names_out().tolist()
@@ -79,7 +79,7 @@ print(f"  TF-IDF matrix density: {tfidf_matrix.nnz / (tfidf_matrix.shape[0] * tf
 print(f"  Vocabulary size: {len(tfidf_vocabulary)}")
 
 # ============================================================================
-# Diagnostic: top terms by aggregate weight in each matrix
+# Diagnostic prints
 # ============================================================================
 print("\nTop 30 terms by total TF weight:")
 tf_term_totals = np.asarray(tf_matrix.sum(axis=0)).flatten()
@@ -94,24 +94,49 @@ for idx in top_tfidf_indices:
     print(f"  {tfidf_vocabulary[idx]:30s} {tfidf_term_totals[idx]:.2f}")
 
 # ============================================================================
-# Save matrices and vocabularies to the managed folder
+# Save artifacts to the HDFS-backed managed folder
 # ============================================================================
 output_folder = dataiku.Folder("vectorization_artifacts")
-folder_path = output_folder.get_path()
 
-print(f"\nSaving artifacts to {folder_path}...")
+print("\nSaving artifacts to managed folder (HDFS)...")
 
-# Save sparse matrices as .npz files (efficient, scipy-native format)
-sparse.save_npz(os.path.join(folder_path, "tf_matrix.npz"), tf_matrix)
-sparse.save_npz(os.path.join(folder_path, "tfidf_matrix.npz"), tfidf_matrix)
 
-# Save vocabularies as JSON for human readability
-with open(os.path.join(folder_path, "tf_vocabulary.json"), "w") as f:
-    json.dump(tf_vocabulary, f, indent=2)
-with open(os.path.join(folder_path, "tfidf_vocabulary.json"), "w") as f:
-    json.dump(tfidf_vocabulary, f, indent=2)
+def upload_sparse_matrix(folder, file_name, matrix):
+    """
+    Save a scipy sparse matrix to an HDFS-backed managed folder.
+    
+    scipy.sparse.save_npz requires a local file path, so we write to a temp file
+    first, then stream it into the managed folder.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        sparse.save_npz(tmp_path, matrix)
+        with open(tmp_path, "rb") as f:
+            folder.upload_stream(file_name, f)
+        print(f"  Uploaded {file_name}")
+    finally:
+        # Clean up the local temp file
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-# Save the configuration used (helpful when revisiting later)
+
+def upload_json(folder, file_name, obj):
+    """Save a Python object as JSON in the managed folder."""
+    data = json.dumps(obj, indent=2).encode("utf-8")
+    folder.upload_data(file_name, data)
+    print(f"  Uploaded {file_name}")
+
+
+# Upload the sparse matrices
+upload_sparse_matrix(output_folder, "tf_matrix.npz", tf_matrix)
+upload_sparse_matrix(output_folder, "tfidf_matrix.npz", tfidf_matrix)
+
+# Upload the vocabularies
+upload_json(output_folder, "tf_vocabulary.json", tf_vocabulary)
+upload_json(output_folder, "tfidf_vocabulary.json", tfidf_vocabulary)
+
+# Upload the configuration
 config = {
     "min_df": MIN_DF,
     "max_df": MAX_DF,
@@ -121,23 +146,19 @@ config = {
     "tf_vocab_size": len(tf_vocabulary),
     "tfidf_vocab_size": len(tfidf_vocabulary),
 }
-with open(os.path.join(folder_path, "vectorization_config.json"), "w") as f:
-    json.dump(config, f, indent=2)
+upload_json(output_folder, "vectorization_config.json", config)
 
 # ============================================================================
-# Write the index dataset
+# Write the index dataset (this part is unchanged — datasets aren't HDFS-specific)
 # ============================================================================
-# We want the index to cover ALL rows of the original input, so downstream
-# recipes can join by incident_id even for rows that weren't vectorized
 index_df = df[[
     "incident_id",
     "included_in_vectorization",
-    "incident_description_cleaned",  # convenient to have nearby
+    "incident_description_cleaned",
     "cleaned_word_count",
-    "lang_detected",  # for diagnostics later
+    "lang_detected",
 ]].copy()
 
-# Add row_index only for vectorized rows (NaN for excluded)
 row_index_map = dict(zip(vectorizable["incident_id"], vectorizable["row_index"]))
 index_df["row_index"] = index_df["incident_id"].map(row_index_map)
 
