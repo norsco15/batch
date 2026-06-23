@@ -1,25 +1,220 @@
-**Subject:** Models needed for MLION — available in ModelHub
 
-HI
-Following up on the models I'll need for the MLION project. After going through the ModelHub catalogue, the good news is that the models we need are already available internally — no external sourcing required. Here's the list with their technical use in the project:
+## 🇬🇧 ENGLISH VERSION
 
-**Embedding models — core of the clustering pipeline.** These convert incident descriptions into numerical vectors so we can group similar incidents and discover root-cause clusters.
+### Slide 1 — Title (MLION)
 
-- **LaBSE** — multilingual embeddings. Places French, Italian and English in a single shared semantic space, which is especially valuable since ~50% of our incidents are non-English. Could also simplify our translation step.
-- **paraphrase-multilingual-mpnet-base-v2** — multilingual, high quality for semantic similarity between descriptions.
-- **all-mpnet-base-v2** — English, highest-quality model for use on our translated corpus.
-- **all-MiniLM-L6-v2** — English, fast and lightweight, used as a baseline for quick iteration.
+"Good morning everyone, and thank you for being here. Today I'd like to walk you through a project we've been working on called MLION — Machine Learning Incident-Ops Navigator. The idea is to bring Operational Risk Intelligence to our incident data using Natural Language Processing. Let me take you through what the project is about, why it matters, and where we are today."
 
-I'd like access to these as a set to benchmark them on our data and select the best performer.
+### Slide 2 — Project Proposal
 
-**Lemmatization model — text cleaning step.**
+"Let me start with the proposal itself, framed in three parts: scope, goal, and ambition.
 
-- **en_core_web_lg** — large English spaCy model, used to reduce words to their base form during cleaning. An accuracy upgrade over the small version we currently use.
+The **scope** is our Operational Risk historical incidents — specifically the unstructured, free-text data that today is largely underexploited.
 
-These are modern models, a step up from the word-level embeddings used in the reference paper — better suited to our longer, multilingual descriptions. The plan is to validate them against the paper's baseline to confirm the improvement on our own data.
+The **goal** is to explore this data with an innovative approach based on Machine Learning techniques, rather than treating these descriptions as text we simply store and never analyze.
 
-All of the above are in the ModelHub catalogue: [insert ModelHub link]
+And the **ambition** is twofold: first, to acquire additional knowledge about our incidents and losses — knowledge that's currently locked inside the text — and second, to contribute to identifying and developing augmented risk mitigation measures."
 
-Could you point me to the process for enabling these for our Dataiku project? Happy to discuss.
+### Slide 3 — Project Context
 
-Best,
+"To give you the context: our Operational Risk data lives in RISK360, and comes in the form of three related datasets — Historical Incidents, Causes, and Consequences. Historical Incidents capture the 'when' and 'where' of a failure. Causes identify the underlying triggers. And Consequences capture the financial and non-financial impacts.
+
+Each of these contains two kinds of data. There's **structured data** — dates, loss amounts, business unit codes, Basel event types — essential for regulatory reporting, and which we already use well. But there's also **unstructured data**, and this is where the opportunity lies. The description field is especially valuable: it captures context, patterns, and root causes that the structured fields alone simply miss. That's the data we want to unlock."
+
+### Slide 4 — Academic Validation
+
+"During my research, I came across a paper that essentially answers the exact question we're asking. It's a 2023 paper by a team of mathematicians from universities in Italy, together with operational risk analysts from UniCredit — a major Italian credit institution. They apply text analysis and clustering techniques to operational risk loss descriptions — precisely what we want to do.
+
+This matters for three reasons. First, it **confirms the relevance** of our idea — it validates that unstructured descriptions are a primary source of intelligence for root-cause analysis. Second, it **gives us credibility** — we're not improvising; we have a robust, peer-reviewed foundation. And third, it gives us a **structured methodology** — a proven workflow going from cleaning, to vectorization, to clustering. So this discovery essentially de-risks our approach before we even start."
+
+### Slide 5 — Proposed Workflow (1/2)
+
+"Here's the end-to-end workflow we're proposing. It's a nine-step pipeline.
+
+We start with **data ingestion** — joining the Historical Incidents, Causes, and Consequences datasets. Then **text cleaning** — normalizing through lowercasing, stop-word removal, and lemmatization. Step three, **vectorization** — converting the cleaned text into a word-frequency matrix. Step four, **semantic enrichment** — enriching that matrix with semantic-similarity information, so that words meaning the same thing are treated as related. Step five, **2D projection** — projecting the data into two dimensions so we can visually explore the clusters. Step six, **cluster labeling** — identifying and labeling the granular root-cause clusters.
+
+Beyond the core analysis, steps seven to nine show where this can go: an **auto-classifier** to tag new incidents, a **risk-score model** combining text with structured fields for predictive scoring, and finally **APIs and dashboards** to expose the results in real time."
+
+### Slide 6 — Proposed Workflow (2/2)
+
+"To make this concrete and visual: what we're really doing is taking **unstructured data** — these long, messy incident descriptions, like the one on the left — feeding them through an **NLP model**, and getting out **clusters of events** on the right.
+
+Each point is an incident; each color is a cluster of incidents that share a common root cause. So instead of reading thousands of descriptions one by one, an analyst can see groups emerge — and tag them, for example, as 'credit card forgery' or 'disputes on interest rate calculation.' That's the core value: turning text into discoverable, granular root-cause groups."
+
+### Slide 7 — From Raw Text to Actionable Insight (NEW)
+
+"To make the value even more concrete, here's what changes in practice for an OpRisk analyst working with our ~10,000 incident descriptions.
+
+**Today**, on the left, the descriptions are unstructured free text. Rich content, but simply stored and under-exploited. Similar root causes are scattered across the dataset with no easy way to group them. Patterns are invisible to manual analysis, and the approach doesn't scale to hundreds of thousands of incidents.
+
+**With MLION**, on the right, the same descriptions are automatically organized into clusters based on their semantic content. To give you an illustrative example, drawn from what the reference paper found in similar OpRisk data: we might discover around 3,800 incidents that are interest-rate calculation disputes, around 500 that are credit card forgery, and another group around mortgage fraud. Numbers and labels here are illustrative — the real ones will come out of our data.
+
+The result: granular root-cause groups surface automatically, new incidents get auto-tagged, hidden patterns become visible at scale, and this same cluster structure becomes the foundation for predictive risk scoring.
+
+The **concrete shift** is: from simply storing incident descriptions, to actively managing root-cause families — making OpRisk data navigable and actionable."
+
+### Slide 8 — Potential Business Outcomes
+
+"So why does this matter for the business? Ultimately, it transforms our Operational Risk data from a static reporting archive into a preventive intelligence engine. This splits into two families of outcomes.
+
+On the **intelligence** side: discovering granular root-cause groups that today are invisible, automatically tagging new incidents as they come in, and identifying hidden failure patterns across the bank.
+
+On the **prevention** side: once we understand these patterns, we can predict severity and likelihood, generate early-warning risk scores, and ultimately support mitigation strategy with evidence. We move from describing what happened, to anticipating what might happen next."
+
+### Slide 9 — Appendix (transition)
+
+"That's the project at a high level. In the appendix, I'd like to walk you through the preparatory work we've already done to validate that the data foundation is solid before building the full pipeline."
+
+### Slide 10 — Managing 1-to-N Relationships
+
+"The first challenge is structural. Our three datasets have a one-to-many relationship: a single incident can have several causes and several consequences.
+
+Looking at the 2025 validated incidents — that's 10,105 incidents — about 89% have a single cause, 10% have two, and around 1% have three or more. For consequences, it's more spread: about 73% have a single consequence, 21% have two, and the rest have three or more.
+
+This matters because a naive join would duplicate an incident with multiple causes and consequences into several rows — which would distort loss amounts and contaminate the clustering."
+
+### Slide 11 — Aggregation Resolution
+
+"The solution was aggregation. We aggregated the causes and consequences per incident so that each incident remains a single row.
+
+We applied **field-specific logic** for each aggregation. For example, for the loss amounts in consequences, we summed them — and verified that this sum matches the total loss field in Historical Incidents, which gives us a strong consistency check. We did the appropriate aggregation for every field depending on its meaning.
+
+The result: a clean, consistent dataset of 10,105 incidents, each represented by a single comprehensive record, while preserving all the granular detail."
+
+### Slide 12 — Multilingual Incident Descriptions
+
+"The second challenge: our incident descriptions are multilingual. Language detection showed roughly 49% English (about 4,976 incidents), 43% French (4,379), 7% Italian (684), and a negligible tail of other languages.
+
+Because nearly half the data is non-English, we can't take an English-only approach — we'd be throwing away half our incidents. To cluster everything in a single, unified semantic space, we need to translate everything into English.
+
+The complication is that, in our Dataiku environment, we don't have the translation plugin available."
+
+### Slide 13 — Translation Workaround
+
+"Here's the workaround we built. We split out the non-English descriptions — French and Italian — into separate files. We then used the **CIB AI Platform's Translate tool** to translate them into English: roughly 5,000 descriptions in total, processed in under four hours.
+
+Once translated, we brought those English versions back into the flow and rejoined them with the master dataset — matching on the incident ID, so every incident lines up exactly with its original structured data. The result is a single, fully English corpus, ready for the NLP pipeline, without ever sending our data outside the bank's controlled environment."
+
+### Slide 14 — Next Steps
+
+"To close, here's where we stand step by step and what's coming next.
+
+The OpRisk data is ready — with the tactical workaround applied via the CIB AI Translate tool, since the native Dataiku Offline Translation plugin remains a must-have if we want to industrialize. Step 1, descriptions cleaning, is done using spaCy's English model, which is available in DSS. Step 2, vectorization, is done — no model required.
+
+The current focus is **step 3, semantic adjustment**, which is the next thing to start. For this, we need a sentence-transformers model. Our must-have is **all-mpnet-base-v2** — the highest-quality English model, well suited to our translated corpus. As a nice-to-have, we'd also like access to **LaBSE**, a multilingual embedding model that places multilingual descriptions in a single shared semantic space — this would let us experiment with embedding French and Italian directly in the future.
+
+Steps 4, 5, and 6 — dimensions reduction, cluster selection, and cluster validation — depend on step 3 and need no additional model.
+
+So the main unlock right now is getting access to the sentence-transformers models for step 3. Once that's in place, the rest of the pipeline can be built quickly. Happy to take any questions."
+
+---
+
+## 🇫🇷 VERSION FRANÇAISE
+
+### Slide 1 — Title (MLION)
+
+« Bonjour à tous, et merci d'être présents. Aujourd'hui, je vais vous présenter un projet sur lequel nous travaillons, appelé MLION — Machine Learning Incident-Ops Navigator. L'idée est d'apporter de l'intelligence sur nos données de Risque Opérationnel grâce au Natural Language Processing. Je vais vous expliquer en quoi consiste le projet, pourquoi il est important, et où nous en sommes aujourd'hui. »
+
+### Slide 2 — Project Proposal
+
+« Commençons par la proposition elle-même, structurée en trois parties : scope, goal, ambition.
+
+Le **scope**, c'est nos incidents historiques de Risque Opérationnel — en particulier les données non structurées en texte libre, aujourd'hui largement sous-exploitées.
+
+Le **goal** est d'explorer ces données avec une approche innovante basée sur des techniques de Machine Learning, plutôt que de simplement stocker ces descriptions sans jamais les analyser.
+
+Et l'**ambition** est double : d'abord, acquérir des connaissances supplémentaires sur nos incidents et pertes — des connaissances actuellement enfermées dans le texte — et ensuite, contribuer à identifier et développer des mesures de mitigation des risques renforcées. »
+
+### Slide 3 — Project Context
+
+« Pour le contexte : nos données de Risque Opérationnel sont dans RISK360, sous forme de trois datasets liés — Incidents historiques, Causes, et Conséquences. Les Incidents historiques capturent le "quand" et le "où" d'un événement. Les Causes identifient les déclencheurs sous-jacents. Et les Conséquences capturent les impacts financiers et non-financiers.
+
+Chacun contient deux types de données. Il y a les **données structurées** — dates, montants de perte, codes business unit, types d'événement Bâle — essentielles pour le reporting réglementaire, et déjà bien utilisées. Mais il y a aussi les **données non structurées**, et c'est là que se trouve l'opportunité. Le champ description est particulièrement précieux : il capture le contexte, les patterns, et les causes racines que les champs structurés seuls ne reflètent pas. C'est cette donnée que nous voulons exploiter. »
+
+### Slide 4 — Academic Validation
+
+« Pendant mes recherches, je suis tombé sur un papier qui répond exactement à la question que nous nous posons. C'est un papier de 2023, écrit par une équipe de mathématiciens d'universités italiennes, en collaboration avec des analystes de risque opérationnel d'UniCredit — une grande banque italienne. Ils appliquent des techniques d'analyse de texte et de clustering aux descriptions de pertes opérationnelles — exactement ce que nous voulons faire.
+
+C'est important pour trois raisons. D'abord, cela **confirme la pertinence** de notre idée — valide que les descriptions non structurées sont une source primaire d'intelligence pour l'analyse de causes racines. Ensuite, cela **donne de la crédibilité** — nous n'improvisons pas, nous avons une fondation robuste et peer-reviewed. Et enfin, cela nous donne une **méthodologie structurée** — un workflow éprouvé allant du nettoyage à la vectorisation puis au clustering. Cette découverte sécurise notre approche avant même de commencer. »
+
+### Slide 5 — Proposed Workflow (1/2)
+
+« Voici le workflow end-to-end que nous proposons, un pipeline en neuf étapes.
+
+On commence par l'**ingestion des données** — joindre les datasets Incidents, Causes et Conséquences. Puis le **nettoyage du texte** — normalisation, suppression des stop-words, lemmatisation. Étape 3, la **vectorisation** — conversion du texte nettoyé en une matrice de fréquences. Étape 4, l'**enrichissement sémantique** — enrichir cette matrice avec des informations de similarité, pour que des mots de même sens soient traités comme liés. Étape 5, la **projection 2D** — projeter les données en 2 dimensions pour explorer visuellement les clusters. Étape 6, le **cluster labeling** — identifier et nommer les clusters de causes racines.
+
+Au-delà de l'analyse principale, les étapes 7 à 9 montrent où cela peut aller : un **auto-classifier** pour tagger les nouveaux incidents, un **modèle de risk-score** combinant texte et données structurées pour du scoring prédictif, et enfin des **APIs et dashboards** pour exposer les résultats en temps réel. »
+
+### Slide 6 — Proposed Workflow (2/2)
+
+« Pour rendre cela concret et visuel : ce qu'on fait en réalité, c'est prendre les **données non structurées** — ces descriptions longues et complexes, comme celle à gauche — les faire passer par un **modèle NLP**, et obtenir des **clusters d'événements** à droite.
+
+Chaque point est un incident ; chaque couleur est un cluster d'incidents partageant une cause racine commune. Donc au lieu de lire des milliers de descriptions une par une, un analyste peut voir des groupes émerger — et les tagger, par exemple "credit card forgery" ou "litiges sur calcul de taux d'intérêt". C'est ça la vraie valeur : transformer du texte en groupes de causes racines explorables. »
+
+### Slide 7 — From Raw Text to Actionable Insight (NEW)
+
+« Pour rendre la valeur encore plus concrète, voici ce qui change en pratique pour un analyste OpRisk travaillant avec nos ~10 000 descriptions d'incidents.
+
+**Aujourd'hui**, à gauche, les descriptions sont en texte libre non structuré. Du contenu riche, mais simplement stocké et sous-exploité. Les causes racines similaires sont éparpillées dans le dataset, sans moyen simple de les regrouper. Les patterns sont invisibles à une analyse manuelle, et l'approche ne passe pas à l'échelle de centaines de milliers d'incidents.
+
+**Avec MLION**, à droite, les mêmes descriptions sont automatiquement organisées en clusters selon leur contenu sémantique. Pour vous donner un exemple illustratif, inspiré de ce que le papier de référence a trouvé sur des données OpRisk similaires : on pourrait découvrir environ 3 800 incidents de litiges sur calcul de taux d'intérêt, environ 500 cas de credit card forgery, et un autre groupe autour de mortgage fraud. Les chiffres et labels ici sont illustratifs — les vrais sortiront de nos données.
+
+Le résultat : les groupes de causes racines apparaissent automatiquement, les nouveaux incidents sont auto-taggés, les patterns cachés deviennent visibles à grande échelle, et cette structure de clusters devient la fondation pour du risk scoring prédictif.
+
+Le **changement concret** est là : passer du simple stockage des descriptions d'incidents, à la gestion active de familles de causes racines — rendant la donnée OpRisk navigable et actionnable. »
+
+### Slide 8 — Potential Business Outcomes
+
+« Pourquoi est-ce important pour le business ? Au final, cela transforme nos données de Risque Opérationnel d'une archive de reporting statique en un moteur d'intelligence préventive. Cela se décline en deux familles de résultats.
+
+Côté **intelligence** : découvrir des groupes de causes racines aujourd'hui invisibles, tagger automatiquement les nouveaux incidents, et identifier des patterns de défaillance cachés à l'échelle de la banque.
+
+Côté **prévention** : une fois ces patterns compris, on peut prédire la sévérité et la vraisemblance, générer des risk scores d'alerte précoce, et au final soutenir la stratégie de mitigation avec des éléments factuels. On passe de décrire ce qui s'est passé, à anticiper ce qui pourrait arriver. »
+
+### Slide 9 — Appendix (transition)
+
+« Voilà le projet à haut niveau. En annexe, je vais vous présenter le travail préparatoire que nous avons déjà fait pour valider que la fondation de données est solide avant de construire le pipeline complet. »
+
+### Slide 10 — Managing 1-to-N Relationships
+
+« Le premier défi est structurel. Nos trois datasets ont une relation un-à-plusieurs : un incident peut avoir plusieurs causes et plusieurs conséquences.
+
+Sur les incidents validés de 2025 — soit 10 105 incidents — environ 89% ont une seule cause, 10% en ont deux, et environ 1% en ont trois ou plus. Pour les conséquences, c'est plus réparti : environ 73% ont une seule conséquence, 21% en ont deux, et le reste en a trois ou plus.
+
+Cela compte parce qu'une jointure naïve dupliquerait un incident avec plusieurs causes et conséquences en plusieurs lignes — ce qui fausserait les montants de perte et contaminerait le clustering. »
+
+### Slide 11 — Aggregation Resolution
+
+« La solution a été l'agrégation. Nous avons agrégé les causes et conséquences par incident pour que chaque incident reste une ligne unique.
+
+Nous avons appliqué une **logique spécifique par champ**. Par exemple, pour les montants de perte dans les conséquences, nous les avons sommés — et vérifié que cette somme correspond au champ de perte totale dans les Incidents historiques, ce qui donne un contrôle de cohérence fort. Nous avons fait l'agrégation appropriée pour chaque champ selon son sens.
+
+Résultat : un dataset propre et cohérent de 10 105 incidents, chacun représenté par une ligne unique et complète, tout en préservant tous les détails granulaires. »
+
+### Slide 12 — Multilingual Incident Descriptions
+
+« Deuxième défi : nos descriptions d'incidents sont multilingues. La détection de langue a montré environ 49% d'anglais (4 976 incidents), 43% de français (4 379), 7% d'italien (684), et un reste négligeable.
+
+Comme près de la moitié des données est non-anglaise, on ne peut pas adopter une approche all-English — on perdrait la moitié des incidents. Pour clusteriser dans un espace sémantique unifié, il faut tout traduire en anglais.
+
+La complication, c'est que dans notre environnement Dataiku, le plugin de traduction n'est pas disponible. »
+
+### Slide 13 — Translation Workaround
+
+« Voici le workaround mis en place. Nous avons extrait les descriptions non-anglaises — français et italien — dans des fichiers séparés. Puis nous avons utilisé l'outil **Translate de la CIB AI Platform** pour les traduire en anglais : environ 5 000 descriptions au total, traitées en moins de 4 heures.
+
+Une fois traduites, nous avons réinjecté ces versions anglaises dans le flow et les avons rejointes au dataset principal — par incident ID, donc chaque incident reste aligné avec ses données structurées originales. Résultat : un corpus unique entièrement en anglais, prêt pour le pipeline NLP, sans jamais sortir les données de l'environnement contrôlé de la banque. »
+
+### Slide 14 — Next Steps
+
+« Pour conclure, voici où nous en sommes étape par étape et ce qui arrive.
+
+Les données OpRisk sont prêtes — avec le workaround tactique appliqué via l'outil CIB AI Translate, sachant que le plugin natif Dataiku Offline Translation reste un must-have si on veut industrialiser. L'étape 1, nettoyage des descriptions, est faite avec le modèle anglais de spaCy, disponible dans DSS. L'étape 2, vectorisation, est faite — aucun modèle requis.
+
+Le focus actuel, c'est l'**étape 3, semantic adjustment**, qui est la prochaine à démarrer. Pour cela, on a besoin d'un modèle sentence-transformers. Notre must-have est **all-mpnet-base-v2** — le modèle anglais de meilleure qualité, parfaitement adapté à notre corpus traduit. En nice-to-have, on aimerait aussi accéder à **LaBSE**, un modèle d'embeddings multilingue qui place les descriptions multilingues dans un espace sémantique partagé — cela nous permettrait d'expérimenter l'embedding direct du français et de l'italien à l'avenir.
+
+Les étapes 4, 5 et 6 — dimensions reduction, cluster selection, et cluster validation — dépendent de l'étape 3 et ne nécessitent aucun modèle supplémentaire.
+
+Donc le déblocage principal aujourd'hui, c'est l'accès aux modèles sentence-transformers pour l'étape 3. Une fois ça en place, le reste du pipeline pourra être construit rapidement. Je suis à votre disposition pour toutes vos questions. »
+
+---
