@@ -1,0 +1,134 @@
+
+Stage 6 Done — Here’s the Smart Path Through Stages 7-9
+You now have a matrix of ~10,039 × 768 embeddings. Everything from here on is scikit-learn territory (no more model blockers), so the remaining risk isn’t access — it’s making the right analytical choices. Let me lay out the plan, the reasoning behind each choice, and the recipes.
+Overview of what remains
+Embeddings (10,039 × 768)
+    ↓
+[Stage 7a] Reduce to ~50 dims (PCA) ──→ for CLUSTERING (denoising)
+[Stage 7b] Reduce to 2 dims (UMAP)  ──→ for VISUALIZATION only
+    ↓
+[Stage 8] Clustering: compare k-means / GMM / (HDBSCAN) across a range of k
+    ↓  pick best k via silhouette + interpretability
+[Stage 9] Cluster interpretation: top terms per cluster (reusing your TF-IDF matrix!) 
+          + representative incidents + analyst tagging sessions
+One key principle before the code: never cluster on the 2D projection. UMAP-to-2D distorts distances to make a pretty picture; clustering on it produces artifacts. Cluster on the higher-dimensional representation, then display on the 2D map. This is the single most common mistake in this kind of pipeline.
+Step 0 — Persist the embeddings properly (if not already done)
+Same pattern as your TF-IDF artifacts — into the HDFS managed folder:
+import dataiku, tempfile, os
+import numpy as np
+
+folder = dataiku.Folder("vectorization_artifacts")
+
+def upload_npy(folder, file_name, arr):
+    with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        np.save(tmp_path, arr)
+        with open(tmp_path, "rb") as f:
+            folder.upload_stream(file_name, f)
+    finally:
+        os.remove(tmp_path)
+
+upload_npy(folder, "embeddings_mpnet.npy", embeddings)  # (10039, 768), float32
+Make sure the row order matches your vectorization_index dataset (row_index → incident_id). If you encoded from the same dataframe order, you’re fine — but verify once, because every downstream cluster assignment depends on this alignment.
+Stage 7 — Dimensionality reduction (two separate tracks)
+7a. PCA to ~50 dims, for clustering
+768 dimensions contain redundancy and noise; clustering algorithms (especially GMM) behave better on 30–100 dims. PCA is fast, deterministic, and preserves global structure:
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import normalize
+
+# L2-normalize first: cosine similarity becomes Euclidean distance,
+# which makes k-means behave like spherical k-means (paper's preferred variant!)
+emb_norm = normalize(embeddings)
+
+pca = PCA(n_components=50, random_state=42)
+emb_50 = pca.fit_transform(emb_norm)
+print("Variance explained by 50 components:", pca.explained_variance_ratio_.sum())
+# Expect ~0.75-0.90. If <0.7, raise to 80 components.
+The normalization step is important and subtle: all-mpnet-base-v2 is trained for cosine similarity, but k-means uses Euclidean distance. L2-normalizing the vectors first makes Euclidean k-means equivalent to clustering by cosine — effectively the spherical k-means the paper found among its best performers. You get methodological alignment for free.
+7b. UMAP to 2 dims, for the visual map
+# pip install umap-learn  (from internal PyPI mirror — pure Python + numba, should install fine)
+import umap
+
+reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric="cosine", random_state=42)
+emb_2d = reducer.fit_transform(emb_norm)   # (10039, 2)
+upload_npy(folder, "embeddings_2d_umap.npy", emb_2d)
+If umap-learn won’t install (numba dependency can be finicky on locked-down environments), fall back to PCA(n_components=2) — less pretty separation but zero install risk. Don’t block on this; it’s cosmetic.
+Stage 8 — Clustering: run a comparison, don’t guess
+Mirror the paper’s philosophy (they compared 7 methods) but adapted to embeddings. Three methods, each with a different inductive bias:
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
+from sklearn.metrics import silhouette_score
+import pandas as pd
+
+results = []
+K_RANGE = range(4, 21)   # 4 to 20 clusters
+
+for k in K_RANGE:
+    # --- Spherical k-means (via normalized vectors) ---
+    km = KMeans(n_clusters=k, n_init=10, random_state=42)
+    labels_km = km.fit_predict(emb_50)
+    sil_km = silhouette_score(emb_50, labels_km, sample_size=5000, random_state=42)
+
+    # --- Gaussian Mixture ---
+    gmm = GaussianMixture(n_components=k, covariance_type="diag", random_state=42)
+    labels_gmm = gmm.fit_predict(emb_50)
+    sil_gmm = silhouette_score(emb_50, labels_gmm, sample_size=5000, random_state=42)
+
+    results.append({"k": k, "silhouette_kmeans": sil_km, "silhouette_gmm": sil_gmm})
+    print(f"k={k:2d}  |  kmeans sil={sil_km:.4f}  |  gmm sil={sil_gmm:.4f}")
+
+pd.DataFrame(results)
+Optionally add HDBSCAN (density-based, finds the number of clusters itself and flags outliers as noise — very useful for OpRisk where a residual “other” bucket is realistic). pip install hdbscan; if it fails to compile on your env, skip it without regret.
+How to pick k — don’t rely on silhouette alone. Silhouette will suggest a range (look for local maxima, typically it declines slowly after some point). But the real criterion is interpretability by analysts: 8 clusters an analyst can name beats 15 clusters with the best silhouette. Take the top 2-3 candidate k values from the metrics, generate the interpretation output (Stage 9) for each, and choose the one whose clusters make the most business sense. That choice — made with analysts — is precisely the “cluster selection” step of your workflow slide.
+Stage 9 — Interpretation: this is where your TF-IDF matrix pays off
+Embeddings cluster well but are opaque — you can’t read a 768-dim vector. Your TF-IDF matrix from Stage 5 is the interpretability layer: for each cluster, compute which terms are over-represented versus the rest of the corpus (c-TF-IDF logic).
+import numpy as np
+from scipy import sparse
+
+# Load your TF matrix + vocabulary from the managed folder (helpers from before)
+# tf_matrix: (10039, ~10110), vocab: list of terms — SAME row order as embeddings!
+
+def top_terms_per_cluster(tf_matrix, labels, vocab, top_n=15):
+    out = {}
+    overall_freq = np.asarray(tf_matrix.sum(axis=0)).ravel() + 1.0
+    for c in np.unique(labels):
+        mask = labels == c
+        cluster_freq = np.asarray(tf_matrix[mask].sum(axis=0)).ravel()
+        # Ratio of in-cluster frequency vs corpus frequency (distinctiveness)
+        score = (cluster_freq / mask.sum()) / (overall_freq / tf_matrix.shape[0])
+        score[cluster_freq < 5] = 0          # ignore ultra-rare terms
+        top_idx = np.argsort(score)[::-1][:top_n]
+        out[c] = [(vocab[i], round(score[i], 2)) for i in top_idx]
+    return out
+
+top_terms = top_terms_per_cluster(tf_matrix, labels_km, vocab)
+for c, terms in top_terms.items():
+    print(f"\nCluster {c} ({(labels_km==c).sum()} incidents):")
+    print("  ", ", ".join(t for t, s in terms))
+Add representative incidents per cluster (the ones closest to each centroid) — analysts trust real examples more than word lists:
+from sklearn.metrics.pairwise import euclidean_distances
+
+def representative_incidents(emb_50, labels, texts, km_model, n=3):
+    for c in range(km_model.n_clusters):
+        mask_idx = np.where(labels == c)[0]
+        d = euclidean_distances(emb_50[mask_idx], km_model.cluster_centers_[c].reshape(1, -1)).ravel()
+        for i in mask_idx[np.argsort(d)[:n]]:
+            print(f"[Cluster {c}] {texts[i][:200]}")
+        print()
+Finally, write everything into a Flow-visible dataset — this becomes the working document for your analyst tagging sessions:
+result_df = index_df.copy()          # incident_id, row_index, ...
+result_df["cluster"] = labels_km
+result_df["umap_x"] = emb_2d[:, 0]
+result_df["umap_y"] = emb_2d[:, 1]
+dataiku.Dataset("incidents_clustered").write_with_schema(result_df)
+Plus a matplotlib scatter of umap_x/umap_y colored by cluster — that’s your slide-6 visual (“Clusters of events”) made real with actual data. The moment that plot exists with named clusters, you can replace the illustrative numbers in your “From Raw Text to Actionable Insight” slide with real ones.
+Order of operations & pitfalls
+	1.	Persist embeddings + verify row alignment with vectorization_index (10 min — but skipping it can silently corrupt everything downstream)
+	2.	PCA-50 + UMAP-2D (fast)
+	3.	Run the k-comparison loop, plot silhouette vs k
+	4.	For the top 2-3 candidate k’s: generate top-terms + representative incidents
+	5.	Look at them yourself first, pick the strongest candidate, then book the analyst tagging session (that’s the expert-involvement phase you scoped at 3-5 sessions)
+	6.	Lock cluster labels → incidents_clustered dataset → real “before/after” slide
+Two pitfalls to keep in mind: fix random_state=42 everywhere (k-means, GMM, UMAP) so your results are reproducible for the audit trail; and expect one big heterogeneous “other” cluster — that’s normal for OpRisk data (the paper had one too), and it’s a candidate for a second-level clustering pass later rather than a sign of failure.
+Run steps 1-3 and paste me the silhouette-vs-k table — I’ll help you read it and decide which k values to take into the interpretation round.
