@@ -1,0 +1,54 @@
+
+Script Oral — Deck Checkpoint (FR + EN)
+Voici le script pour les 4 slides, dans les deux langues. Ton adapté à un public management non-technique : concret, imagé, rassurant.
+
+🇫🇷 VERSION FRANÇAISE
+Slide 1 — Where We Stand
+« Bonjour à tous, merci pour ce point d’étape. En une phrase : la bonne nouvelle, c’est que le principal obstacle technique du projet est maintenant levé.
+Si vous regardez notre workflow en 6 étapes, les trois premières sont désormais terminées. Le nettoyage des descriptions, leur transformation en données exploitables, et surtout l’étape 3 — qui nécessitait un modèle d’intelligence artificielle qu’on ne pouvait pas installer jusqu’à récemment.
+Trois messages à retenir. D’abord, ce modèle est maintenant installé dans notre environnement Dataiku, grâce à l’équipe ITG — c’était la principale dépendance externe du projet, et elle est résolue. Ensuite, on a déjà utilisé ce modèle pour traiter l’intégralité de nos 10 000 incidents. Et enfin, point important pour la suite : toutes les étapes restantes utilisent des outils standards qu’on a déjà — plus besoin de rien demander à personne d’externe. On avance de façon autonome à partir de maintenant. »
+Slide 2 — Teaching the Machine to Read
+« Laissez-moi vous expliquer simplement ce qu’on a fait avec ce modèle, parce que c’est le cœur du projet.
+Le défi, c’est que nos incidents sont décrits en texte libre — des phrases écrites par des humains. Un ordinateur ne sait pas “lire” le sens d’une phrase. Ce que fait notre modèle, c’est qu’il transforme chaque description d’incident en une sorte de “signature” : une liste de 768 nombres qui capture le sens de la phrase. Voyez ça comme une empreinte digitale du sens.
+Et voici l’idée vraiment importante — celle qui rend tout le projet possible. Deux incidents qui parlent de la même chose obtiennent des signatures très proches, même s’ils utilisent des mots complètement différents. Par exemple, si un incident parle d’un “customer” et un autre d’un “client”, ou l’un d’une “complaint” et l’autre d’un “claim” — le modèle comprend maintenant que ce sont des concepts liés.
+Sur le petit schéma à droite : les incidents qui se ressemblent se retrouvent proches les uns des autres, et ceux qui n’ont rien à voir sont éloignés. C’est exactement ce qui va nous permettre de regrouper les incidents par ce qu’ils veulent dire, et non plus juste par les mots qu’ils contiennent. »
+Slide 3 — Proof It Works
+« Avant de lancer le modèle sur nos 10 000 incidents, on a voulu vérifier qu’il fonctionnait vraiment. On lui a fait passer un petit test tout simple.
+On lui a donné trois phrases. Les phrases A et B parlent toutes les deux d’un litige client sur un taux — mais avec des mots différents. La phrase C, elle, parle de la météo — aucun rapport.
+On a ensuite demandé au modèle d’évaluer à quel point ces phrases se ressemblent, sur une échelle de 0 à 1. Résultat : il a donné un score élevé — 0,65 — aux phrases A et B, reconnaissant correctement qu’elles parlent de la même chose. Et un score quasi nul aux paires sans rapport avec la météo.
+Conclusion : le modèle distingue de façon fiable les incidents liés des incidents sans rapport. Il comprend le sens, pas juste les mots-clés. On avait donc le feu vert pour l’appliquer à l’ensemble de nos données — ce qui est fait. »
+Slide 4 — Next Steps
+« Alors, qu’est-ce qui vient maintenant ? Quatre étapes, que je vous explique simplement.
+Première étape, condenser. Chaque incident a aujourd’hui une signature de 768 nombres. C’est beaucoup, et il y a du “bruit” là-dedans. On va garder l’essentiel — environ 50 nombres — en préservant le sens et en éliminant le superflu.
+Deuxième étape, cartographier. On va placer nos 10 000 incidents sur une seule carte en 2 dimensions, où les incidents qui se ressemblent apparaissent proches les uns des autres. Une vraie carte visuelle de tout notre risque opérationnel.
+Troisième étape, regrouper. Les algorithmes vont détecter automatiquement les familles d’incidents — les grands groupes de causes racines récurrentes. On va comparer plusieurs méthodes pour garder la plus fiable.
+Et quatrième étape, la plus importante — valider. On va passer en revue ces familles avec les experts du risque opérationnel, leur donner un nom, et confirmer qu’elles ont du sens métier. C’est là que votre expertise entre en jeu.
+Tout ça tourne sur des outils qu’on a déjà — aucune nouvelle demande externe. Et au prochain point d’étape, ce que vous verrez, c’est la vraie carte de nos 10 000 incidents, organisée en familles de causes racines nommées, avec les vrais chiffres à la place des illustrations d’aujourd’hui. Merci, je prends vos questions. »
+
+🇬🇧 ENGLISH VERSION
+Slide 1 — Where We Stand
+“Good morning everyone, and thank you for this checkpoint. In one sentence: the good news is that the project’s main technical blocker is now resolved.
+If you look at our 6-step workflow, the first three steps are now complete. Cleaning the descriptions, turning them into usable data, and most importantly step 3 — which required an AI model we couldn’t install until recently.
+Three key messages. First, that model is now installed in our Dataiku environment, thanks to the ITG team — it was the project’s main external dependency, and it’s resolved. Second, we’ve already used that model to process all 10,000 of our incidents. And third, an important point going forward: all the remaining steps use standard tools we already have — no further external requests needed. From here on, we move forward autonomously.”
+Slide 2 — Teaching the Machine to Read
+“Let me explain simply what we did with this model, because it’s the heart of the project.
+The challenge is that our incidents are described in free text — sentences written by humans. A computer doesn’t know how to ‘read’ the meaning of a sentence. What our model does is convert each incident description into a kind of ‘signature’: a list of 768 numbers that captures the meaning of the sentence. Think of it as a fingerprint of meaning.
+And here’s the really important idea — the one that makes the whole project possible. Two incidents that talk about the same thing get very similar signatures, even if they use completely different words. For example, if one incident says ‘customer’ and another says ‘client’, or one says ‘complaint’ and another says ‘claim’ — the model now understands these are related concepts.
+On the small diagram to the right: incidents that resemble each other end up close together, and those that have nothing in common are far apart. This is exactly what will let us group incidents by what they mean, rather than just by the words they contain.”
+Slide 3 — Proof It Works
+“Before running the model on our 10,000 incidents, we wanted to verify it actually works. We ran a simple test.
+We gave it three sentences. Sentences A and B both describe a customer dispute about a rate — but using different words. Sentence C is about the weather — completely unrelated.
+We then asked the model to score how similar these sentences are, on a scale from 0 to 1. The result: it gave a high score — 0.65 — to sentences A and B, correctly recognizing they’re about the same thing. And a near-zero score to the pairs involving the weather.
+Conclusion: the model reliably tells related incidents apart from unrelated ones. It understands meaning, not just keywords. So we had the green light to apply it to our entire dataset — which is now done.”
+Slide 4 — Next Steps
+“So what comes next? Four steps, which I’ll explain simply.
+First step, condense. Each incident currently has a signature of 768 numbers. That’s a lot, and there’s some ‘noise’ in there. We’ll keep the essentials — about 50 numbers — preserving the meaning while removing the clutter.
+Second step, map. We’ll place our 10,000 incidents on a single 2D map, where incidents that resemble each other appear close together. A real visual map of our entire operational risk.
+Third step, group. The algorithms will automatically detect the families of incidents — the major recurring root-cause groups. We’ll compare several methods to keep the most reliable one.
+And fourth step, the most important — validate. We’ll review these families with the operational risk experts, give them a name, and confirm they make business sense. This is where your expertise comes in.
+All of this runs on tools we already have — no new external requests. And at the next checkpoint, what you’ll see is the real map of our 10,000 incidents, organized into named root-cause families, with real figures replacing today’s illustrations. Thank you — I’ll take your questions.”
+
+Quelques conseils pour la présentation :
+Durée : chaque version fait environ 4-5 minutes à débit normal. Parfait pour un checkpoint court. Si tu dois raccourcir, la slide 3 (Proof It Works) est la plus compressible — tu peux juste dire “on a testé, ça marche, le modèle reconnaît les phrases similaires” en 20 secondes.
+Le piège à éviter : ne rentre pas dans le détail technique de PCA/UMAP/k-means même si on te pose la question. Reste sur les métaphores (condenser / cartographier / regrouper). Si un manager technique creuse, propose d’en discuter après la réunion — ça évite de perdre le reste de l’audience.
+Ton atout sur la slide 1 : insiste sur “plus besoin de rien demander à personne d’externe”. C’est le message qui rassure le management — ça veut dire pas de nouveau délai, pas de nouvelle dépendance. C’est ce qu’ils retiennent.
