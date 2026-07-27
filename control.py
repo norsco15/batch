@@ -1,87 +1,91 @@
-import dataiku, numpy as np, pandas as pd, umap, hdbscan
-from sklearn.preprocessing import normalize
-from sklearn.feature_extraction.text import CountVectorizer
+import dataiku
+import numpy as np
+import pandas as pd
+import umap
+import hdbscan
+from sklearn.metrics import silhouette_score
 
-RS = 42
-MCS, MS, METHOD = 50, 10, "eom"          # ← ajuste selon le micro-sweep
-ID, DESC = "LB_REF", "LB_DESC"
-EVENT_COL = "CD_EVENT_TYPE"
+RANDOM_STATE = 42
 
-# ---------- 1. Espace UMAP 15D + HDBSCAN ----------
+# ============================================================
+# 1. Load PCA output (no re-normalization: already done upstream)
+# ============================================================
 df_pca = dataiku.Dataset("pca").get_dataframe()
-X = normalize(df_pca[[c for c in df_pca.columns if c.startswith("pca_")]].values)
+id_col, desc_col = "LB_REF", "LB_DESC"
+pca_cols = [c for c in df_pca.columns if c.startswith("pca_")]
+X = df_pca[pca_cols].values
+print(f"Corpus: {X.shape[0]} incidents, {X.shape[1]} PCA dims")
 
-X15 = umap.UMAP(n_neighbors=15, min_dist=0.0, n_components=15,
-                metric="cosine", random_state=RS).fit_transform(X)
+# ============================================================
+# 2. Fit UMAP once per target dimension (the expensive part)
+#    min_dist=0.0 -> compacts groups, optimal BEFORE clustering
+#    metric="euclidean" -> aligned with the 2D visualization recipe
+# ============================================================
+UMAP_DIMS = [10, 15]
+spaces = {}
 
-clusterer = hdbscan.HDBSCAN(min_cluster_size=MCS, min_samples=MS,
-                            cluster_selection_method=METHOD,
-                            prediction_data=True).fit(X15)
+for d in UMAP_DIMS:
+    print(f"\nFitting UMAP -> {d}D ...")
+    spaces[d] = umap.UMAP(
+        n_neighbors=15,
+        min_dist=0.0,
+        n_components=d,
+        metric="euclidean",
+        random_state=RANDOM_STATE,
+    ).fit_transform(X)
+    print(f"  done, shape={spaces[d].shape}")
 
-df_pca["cluster"] = clusterer.labels_
-df_pca["membership"] = clusterer.probabilities_   # force d'appartenance 0-1
+# ============================================================
+# 3. Sweep HDBSCAN (cheap: reuses the fitted UMAP spaces)
+# ============================================================
+N_TOTAL = X.shape[0]
+rows = []
 
-# ---------- 2. Jointure métadonnées + coordonnées 2D ----------
-meta = (dataiku.Dataset("incidents_cleaned_final").get_dataframe()
-        [[ID, EVENT_COL]].drop_duplicates(subset=[ID]))
-umap2d = dataiku.Dataset("umap").get_dataframe()[[ID, "umap_x", "umap_y"]]
+for d, Xd in spaces.items():
+    for mcs in [40, 50, 60, 80, 100]:
+        for ms in [5, 10, 15]:
+            for method in ["eom", "leaf"]:
+                labels = hdbscan.HDBSCAN(
+                    min_cluster_size=mcs,
+                    min_samples=ms,
+                    metric="euclidean",
+                    cluster_selection_method=method,
+                ).fit_predict(Xd)
 
-final = (df_pca[[ID, DESC, "cluster", "membership"]]
-         .merge(meta, on=ID, how="left")
-         .merge(umap2d, on=ID, how="left"))
+                mask = labels != -1
+                sizes = pd.Series(labels[mask]).value_counts()
+                k = len(sizes)
+                sil = np.nan
+                if k > 1 and mask.sum() > 100:
+                    sil = silhouette_score(Xd[mask], labels[mask])
 
-dataiku.Dataset("incidents_clustered").write_with_schema(final)
+                rows.append({
+                    "space": f"umap_{d}d",
+                    "min_cluster_size": mcs,
+                    "min_samples": ms,
+                    "method": method,
+                    "n_clusters": k,
+                    "noise_pct": round(float(1 - mask.mean()), 4),
+                    "coverage_pct": round(float(mask.mean()), 4),
+                    "silhouette": round(float(sil), 4) if not np.isnan(sil) else None,
+                    "size_min": int(sizes.min()) if k else 0,
+                    "size_max": int(sizes.max()) if k else 0,
+                    "size_median": int(sizes.median()) if k else 0,
+                    "max_share_pct": round(100 * float(sizes.max()) / N_TOTAL, 2) if k else 0,
+                })
 
-# ---------- 3. Profils de clusters ----------
-work = final[final["cluster"] != -1].copy()
-texts = work[DESC].fillna("").astype(str)
+df_sweep = pd.DataFrame(rows)
+dataiku.Dataset("hdbscan_sweep").write_with_schema(df_sweep)
 
-cv = CountVectorizer(min_df=5, max_df=0.6, ngram_range=(1, 2),
-                     stop_words="english")
-M = cv.fit_transform(texts)
-vocab = np.array(cv.get_feature_names_out())
-labels = work["cluster"].values
+# ============================================================
+# 4. Shortlist: usable configs only
+# ============================================================
+shortlist = df_sweep[
+    (df_sweep["n_clusters"].between(10, 50))
+    & (df_sweep["max_share_pct"] < 12)
+    & (df_sweep["noise_pct"] < 0.45)
+    & (df_sweep["size_min"] >= 30)
+].sort_values(["coverage_pct", "silhouette"], ascending=False)
 
-corpus_rate = (np.asarray(M.sum(axis=0)).ravel() + 1.0) / M.shape[0]
-
-profiles = []
-for c in sorted(set(labels)):
-    mask = labels == c
-    n = int(mask.sum())
-
-    # Termes distinctifs (c-TF-IDF simplifié)
-    freq = np.asarray(M[mask].sum(axis=0)).ravel()
-    score = (freq / n) / corpus_rate
-    score[freq < 5] = 0
-    top = vocab[np.argsort(score)[::-1][:12]]
-
-    sub = work[mask]
-    # Ratio d'unicité : distingue clusters "template" et "sémantiques"
-    uniq = sub[DESC].str.strip().str.lower().nunique() / n
-
-    # Incidents représentatifs = plus forte appartenance
-    reps = sub.nlargest(3, "membership")[DESC].str.slice(0, 220).tolist()
-
-    # Event type dominant
-    et = sub[EVENT_COL].value_counts()
-    profiles.append({
-        "cluster": int(c),
-        "taille": n,
-        "part_corpus_pct": round(100 * n / len(final), 2),
-        "termes_cles": ", ".join(top),
-        "ratio_unicite": round(float(uniq), 3),
-        "type_cluster": "TEMPLATE" if uniq < 0.25 else ("MIXTE" if uniq < 0.6 else "SEMANTIQUE"),
-        "event_type_dominant": et.index[0] if len(et) else None,
-        "purete_event_type": round(float(et.iloc[0] / n), 2) if len(et) else None,
-        "exemple_1": reps[0] if len(reps) > 0 else "",
-        "exemple_2": reps[1] if len(reps) > 1 else "",
-        "exemple_3": reps[2] if len(reps) > 2 else "",
-        "libelle_analyste": "",          # ← à remplir en session de tagging
-    })
-
-prof = pd.DataFrame(profiles).sort_values("taille", ascending=False)
-dataiku.Dataset("cluster_profiles").write_with_schema(prof)
-
-print(f"\nBruit : {(final['cluster'] == -1).mean():.1%}")
-print(prof["type_cluster"].value_counts())
-print(prof[["cluster", "taille", "type_cluster", "purete_event_type", "termes_cles"]].head(25).to_string())
+print("\n=== SHORTLIST (usable configs, best coverage first) ===")
+print(shortlist.head(15).to_string(index=False))
