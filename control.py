@@ -1,101 +1,75 @@
-import dataiku
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import tempfile
-import os
+# Map Basel codes to their business labels; unmapped codes fall back to the code
+final[EVENT_LABEL_COL] = (
+    final[EVENT_COL].map(EVENT_TYPE_LABELS).fillna(final[EVENT_COL])
+)
 
-ID_COL, DESC_COL, EVENT_COL = "LB_REF", "LB_DESC", "CD_EVENT_TYPE"
+unmapped = sorted(set(final.loc[final[EVENT_COL].notna(), EVENT_COL]) - set(EVENT_TYPE_LABELS))
+if unmapped:
+    print(f"WARNING: no label for {len(unmapped)} event type(s): {unmapped}")
 
-df = dataiku.Dataset("incidents_clustered").get_dataframe()
-prof = dataiku.Dataset("cluster_profiles").get_dataframe()
+
+
+
+============
+
+# Event type distribution -> reveals cross-taxonomy patterns
+    et = sub[EVENT_LABEL_COL].value_counts()
+    purity = float(et.iloc[0] / n) if len(et) else np.nan
+
+======
+
+"dominant_event_type": et.index[0] if len(et) else None,
+
+=====
+
+"n_event_types": int(sub[EVENT_LABEL_COL].nunique()),
+
+
+====
 
 df = df.merge(
-    prof[["cluster", "size", "top_terms", "repetition_factor",
+    prof[["cluster", "size", "share_pct", "top_terms", "repetition_factor",
           "quality_flag", "taxonomy_relation", "analyst_label"]],
     on="cluster", how="left"
 )
 
-# Legend label: switches to the analyst name once tagging sessions are done
+
+====
+
+# Legend label: "C50 (819 — 8.2%)" or "C50 — KYC recertification (819 — 8.2%)"
 def make_name(r):
     if pd.isna(r["size"]):
         return "Noise"
-    label = str(r.get("analyst_label", "") or "").strip()
-    return f"C{int(r['cluster'])} — {label}" if label else f"C{int(r['cluster'])} ({int(r['size'])})"
+    cid = int(r["cluster"])
+    stats = f"{int(r['size'])} — {r['share_pct']:.1f}%"
+    label = r.get("analyst_label")
+    label = "" if pd.isna(label) else str(label).strip()
+    return f"C{cid} — {label} ({stats})" if label else f"C{cid} ({stats})"
 
 df["cluster_name"] = df.apply(make_name, axis=1)
 
-def wrap(text, width=90, max_chars=600):
-    t = str(text)[:max_chars]
-    lines, cur = [], ""
-    for w in t.split():
-        if len(cur) + len(w) + 1 > width:
-            lines.append(cur); cur = w
-        else:
-            cur = f"{cur} {w}".strip()
-    lines.append(cur)
-    return "<br>".join(lines)
 
-df["hover_desc"] = df[DESC_COL].apply(wrap)
-df["hover_terms"] = df["top_terms"].fillna("").apply(lambda t: wrap(t, width=70, max_chars=220))
+=====
 
-core = df[df["cluster"] != -1].copy()
-noise = df[df["cluster"] == -1].copy()
 
-order = (core.groupby("cluster_name")["size"].first()
-             .sort_values(ascending=False).index.tolist())
+custom_data=[ID_COL, "hover_desc", "hover_terms", EVENT_LABEL_COL,
+                 "cluster", "size", "share_pct", "quality_flag", "taxonomy_relation"],
 
-fig = px.scatter(
-    core,
-    x="umap_x", y="umap_y",
-    color="cluster_name",
-    category_orders={"cluster_name": order},
-    custom_data=[ID_COL, "hover_desc", "hover_terms", EVENT_COL,
-                 "cluster", "size", "quality_flag", "taxonomy_relation"],
-    width=1600, height=950,
-    title=(f"MLION — {core['cluster'].nunique()} root-cause families | "
-           f"{len(core)} incidents clustered ({len(core)/len(df):.0%}), "
-           f"{len(noise)} unclustered"),
-)
-fig.update_traces(
-    marker=dict(size=5, opacity=0.8, line=dict(width=0)),
-    hovertemplate=(
-        "<b>%{customdata[0]}</b> — cluster %{customdata[4]} "
-        "(%{customdata[5]} incidents)<br>"
-        "Quality: %{customdata[6]} | Taxonomy: %{customdata[7]}<br>"
+
+====
+
+hovertemplate=(
+        "<b>%{customdata[0]}</b> — cluster %{customdata[4]}<br>"
+        "Family size: %{customdata[5]} incidents (%{customdata[6]:.1f}% of corpus)<br>"
+        "Quality: %{customdata[7]} | Taxonomy: %{customdata[8]}<br>"
         "Event type: %{customdata[3]}<br>"
         "<i>Cluster terms:</i> %{customdata[2]}<br><br>"
         "%{customdata[1]}<extra></extra>"
     ),
-)
 
-# Noise layer, hidden by default (toggle from the legend)
-if len(noise):
-    fig.add_trace(go.Scattergl(
-        x=noise["umap_x"], y=noise["umap_y"],
-        mode="markers", name="Unclustered",
-        marker=dict(size=3, color="lightgrey", opacity=0.35),
-        visible="legendonly", hoverinfo="skip",
-    ))
 
-fig.update_layout(
-    hoverlabel=dict(bgcolor="white", font_size=12, align="left"),
-    legend=dict(itemsizing="constant", font=dict(size=10),
-                title="Clusters (by size)"),
-    xaxis_title=None, yaxis_title=None,
-    plot_bgcolor="white",
-)
-fig.update_xaxes(showgrid=False, zeroline=False, showticklabels=False)
-fig.update_yaxes(showgrid=False, zeroline=False, showticklabels=False)
+=====
 
-folder = dataiku.Folder("vectorization_artifacts")
-with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as t:
-    tmp = t.name
-try:
-    # Standalone file (~4 MB): no CDN dependency, safe inside the bank network
-    fig.write_html(tmp, include_plotlyjs=True)
-    with open(tmp, "rb") as f:
-        folder.upload_stream("cluster_map.html", f)
-    print("Uploaded cluster_map.html")
-finally:
-    os.remove(tmp)
+title=(f"MLION — {core['cluster'].nunique()} root-cause families | "
+           f"{len(core)} incidents clustered ({len(core)/len(df):.1%}), "
+           f"{len(noise)} unclustered"),
