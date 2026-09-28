@@ -1,0 +1,664 @@
+
+Architecture pour 370k incidents
+Avant le code, un changement de conception qui fait gagner du temps et de la fiabilité : on calcule l'espace UMAP 10D une seule fois, on le fige dans un dataset, et tout le reste le relit.
+Le sweep et le clustering final travaillent alors exactement sur le même espace. HDBSCAN peut être relancé en quelques minutes sans refaire UMAP. Et la reproductibilité est garantie par le dataset figé, ce qui permet d'activer le multithreading d'UMAP.
+HI_ALL_PCA ──► [A] compute_HI_ALL_UMAP_10D ──► HI_ALL_UMAP_10D
+                                                   │
+                        ┌──────────────────────────┤
+                        ▼                          ▼
+          [B] compute_HI_ALL_HDBSCAN_SWEEP   [C] compute_HI_ALL_CLUSTERING
+                        │                          │
+                HI_ALL_HDBSCAN_SWEEP     HI_ALL_INCIDENTS_CLUSTERED
+                                         HI_ALL_CLUSTER_PROFILES
+                                                   │
+                                     [D] build_HI_ALL_CLUSTER_MAP ──► cluster_map_all.html
+J'ai aussi retiré l'espace 15D : sur le corpus 2025, le 10D était systématiquement meilleur, et ça divise le temps de calcul par deux.
+
+Recette A — compute_HI_ALL_UMAP_10D
+Input : HI_ALL_PCA · Output : HI_ALL_UMAP_10D
+import dataiku
+import numpy as np
+import pandas as pd
+import umap
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+INPUT_DATASET = "HI_ALL_PCA"
+OUTPUT_DATASET = "HI_ALL_UMAP_10D"
+ID_COL = "LB_REF"
+
+UMAP_DIMS = 10
+FIT_SAMPLE = 100_000       # UMAP is fitted on a subset, then applied to every row
+TRANSFORM_CHUNK = 50_000   # transform in chunks to keep memory under control
+SAMPLE_SEED = 42           # seeds the subset draw
+
+# ============================================================
+# 1. Load only the columns we need (skips the heavy text column)
+# ============================================================
+schema_cols = [c["name"] for c in dataiku.Dataset(INPUT_DATASET).read_schema()]
+pca_cols = [c for c in schema_cols if c.startswith("pca_")]
+
+df = dataiku.Dataset(INPUT_DATASET).get_dataframe(columns=[ID_COL] + pca_cols)
+X = df[pca_cols].values.astype(np.float32)
+print(f"Input: {X.shape[0]} incidents x {X.shape[1]} PCA dimensions")
+
+# ============================================================
+# 2. Fit UMAP on a random subset
+#    No random_state here: setting one forces UMAP to run
+#    single-threaded, which is what made the 2D run so slow.
+#    Reproducibility is ensured downstream instead: the 10D
+#    coordinates are frozen in a dataset that every later
+#    recipe reads, so the clustering itself is fully repeatable.
+# ============================================================
+rng = np.random.RandomState(SAMPLE_SEED)
+fit_idx = rng.choice(len(X), size=min(FIT_SAMPLE, len(X)), replace=False)
+
+print(f"Fitting UMAP -> {UMAP_DIMS}D on {len(fit_idx)} incidents ...")
+reducer = umap.UMAP(
+    n_neighbors=15,
+    min_dist=0.0,            # compacts groups: the right setting before clustering
+    n_components=UMAP_DIMS,
+    metric="euclidean",      # PCA output is already L2-normalized
+    low_memory=True,
+    n_jobs=-1,
+    verbose=True,
+)
+reducer.fit(X[fit_idx])
+
+# ============================================================
+# 3. Transform the full corpus in chunks
+# ============================================================
+parts = []
+for start in range(0, len(X), TRANSFORM_CHUNK):
+    end = min(start + TRANSFORM_CHUNK, len(X))
+    parts.append(reducer.transform(X[start:end]).astype(np.float32))
+    print(f"  transformed {end}/{len(X)}")
+
+X10 = np.vstack(parts)
+
+# ============================================================
+# 4. Freeze the 10D space in a dataset
+# ============================================================
+out = pd.DataFrame(X10, columns=[f"u10_{i}" for i in range(UMAP_DIMS)])
+out.insert(0, ID_COL, df[ID_COL].values)
+
+dataiku.Dataset(OUTPUT_DATASET).write_with_schema(out)
+print(f"Wrote {OUTPUT_DATASET}: {out.shape}")
+
+Recette B — compute_HI_ALL_HDBSCAN_SWEEP
+Inputs : HI_ALL_UMAP_10D, ton dataset de métadonnées · Output : HI_ALL_HDBSCAN_SWEEP
+import dataiku
+import numpy as np
+import pandas as pd
+import hdbscan
+from sklearn.metrics import silhouette_score
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+UMAP10_DATASET = "HI_ALL_UMAP_10D"
+META_DATASET = "HI_ALL_CLEANED_FINAL"    # <- adjust: dataset holding the event type
+OUTPUT_DATASET = "HI_ALL_HDBSCAN_SWEEP"
+ID_COL = "LB_REF"
+EVENT_COL = "CD_EVENT_TYPE"
+
+RANDOM_STATE = 42
+SAMPLE_SIZE = 60_000      # calibration sample
+SIL_SAMPLE = 10_000       # silhouette is O(n^2): always subsample it
+
+# Grid expressed at FULL-corpus scale; converted to sample scale below.
+# At 370k incidents, ~150 families at 80% coverage means ~2,000
+# incidents per family on average, hence this range.
+MCS_FULL_GRID = [150, 300, 500, 800, 1200]
+MIN_SAMPLES_GRID = [5, 10, 15]
+METHODS = ["eom", "leaf"]
+
+# ============================================================
+# 1. Load the frozen 10D space
+# ============================================================
+u10 = dataiku.Dataset(UMAP10_DATASET).get_dataframe()
+u_cols = [c for c in u10.columns if c.startswith("u10_")]
+N_FULL = len(u10)
+print(f"Full corpus: {N_FULL} incidents")
+
+# ============================================================
+# 2. Stratified sample by event type
+#    Keeps the corpus composition intact, so the parameters
+#    calibrated here transfer to the full run.
+# ============================================================
+meta = (dataiku.Dataset(META_DATASET)
+        .get_dataframe(columns=[ID_COL, EVENT_COL])
+        .drop_duplicates(subset=[ID_COL]))
+u10 = u10.merge(meta, on=ID_COL, how="left")
+u10[EVENT_COL] = u10[EVENT_COL].fillna("UNKNOWN")
+
+frac = min(1.0, SAMPLE_SIZE / N_FULL)
+sample = (u10.groupby(EVENT_COL, group_keys=False)
+             .sample(frac=frac, random_state=RANDOM_STATE))
+
+X = sample[u_cols].values
+N_SAMPLE = len(X)
+SCALE = N_SAMPLE / N_FULL
+print(f"Sample: {N_SAMPLE} incidents ({SCALE:.1%} of the corpus)")
+
+# ============================================================
+# 3. Sweep
+# ============================================================
+rows = []
+total = len(MCS_FULL_GRID) * len(MIN_SAMPLES_GRID) * len(METHODS)
+run = 0
+
+for mcs_full in MCS_FULL_GRID:
+    mcs_sample = max(5, int(round(mcs_full * SCALE)))
+    for ms in MIN_SAMPLES_GRID:
+        for method in METHODS:
+            run += 1
+            labels = hdbscan.HDBSCAN(
+                min_cluster_size=mcs_sample,
+                min_samples=ms,
+                metric="euclidean",
+                cluster_selection_method=method,
+                algorithm="boruvka_kdtree",     # fast in low dimensions
+                approx_min_span_tree=True,
+                core_dist_n_jobs=-1,
+            ).fit_predict(X)
+
+            mask = labels != -1
+            sizes = pd.Series(labels[mask]).value_counts()
+            k = len(sizes)
+
+            sil = np.nan
+            if k > 1 and mask.sum() > 100:
+                sil = silhouette_score(
+                    X[mask], labels[mask],
+                    sample_size=min(SIL_SAMPLE, int(mask.sum())),
+                    random_state=RANDOM_STATE,
+                )
+
+            rows.append({
+                "mcs_full_equivalent": mcs_full,
+                "mcs_on_sample": mcs_sample,
+                "min_samples": ms,
+                "method": method,
+                "n_clusters": k,
+                "coverage_pct": round(float(mask.mean()), 4),
+                "noise_pct": round(float(1 - mask.mean()), 4),
+                "silhouette": round(float(sil), 4) if not np.isnan(sil) else None,
+                # sizes projected back to full-corpus scale
+                "size_min_full_est": int(round(sizes.min() / SCALE)) if k else 0,
+                "size_median_full_est": int(round(sizes.median() / SCALE)) if k else 0,
+                "size_max_full_est": int(round(sizes.max() / SCALE)) if k else 0,
+                "max_share_pct": round(100 * float(sizes.max()) / N_SAMPLE, 2) if k else 0,
+            })
+            r = rows[-1]
+            print(f"[{run:2d}/{total}] mcs_full={mcs_full:5d} ms={ms:2d} {method:4s} | "
+                  f"k={k:4d} | coverage={r['coverage_pct']:.1%} | sil={r['silhouette']}")
+
+df_sweep = pd.DataFrame(rows)
+dataiku.Dataset(OUTPUT_DATASET).write_with_schema(df_sweep)
+
+# ============================================================
+# 4. Shortlist of usable configurations
+# ============================================================
+shortlist = df_sweep[
+    (df_sweep["n_clusters"].between(60, 400))
+    & (df_sweep["max_share_pct"] < 10)
+    & (df_sweep["noise_pct"] < 0.40)
+    & (df_sweep["size_min_full_est"] >= 100)
+].sort_values(["coverage_pct", "silhouette"], ascending=False)
+
+pd.set_option("display.width", 250)
+print("\n=== SHORTLIST (best coverage first) ===")
+print(shortlist.head(15).to_string(index=False))
+
+Recette C — compute_HI_ALL_CLUSTERING
+Inputs : HI_ALL_UMAP_10D, HI_ALL_UMAP, ton dataset de métadonnées · Outputs : HI_ALL_INCIDENTS_CLUSTERED, HI_ALL_CLUSTER_PROFILES
+import dataiku
+import numpy as np
+import pandas as pd
+import hdbscan
+from sklearn.neighbors import NearestNeighbors
+from sklearn.feature_extraction.text import CountVectorizer
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+UMAP10_DATASET = "HI_ALL_UMAP_10D"
+UMAP2D_DATASET = "HI_ALL_UMAP"
+META_DATASET = "HI_ALL_CLEANED_FINAL"         # <- adjust
+OUT_INCIDENTS = "HI_ALL_INCIDENTS_CLUSTERED"
+OUT_PROFILES = "HI_ALL_CLUSTER_PROFILES"
+
+ID_COL = "LB_REF"
+DESC_COL = "LB_DESC_EN"                        # English text, as encoded
+EVENT_COL = "CD_EVENT_TYPE"
+CLEAN_COL = "incident_description_cleaned"     # <- adjust: lemmatized text, for readable terms
+DATE_COL = "DT_OCCURRENCE"                     # <- adjust: incident date, for temporal diagnostics
+
+# Winning row of the sweep, at FULL-corpus scale
+MIN_CLUSTER_SIZE = 500
+MIN_SAMPLES = 10
+SELECTION_METHOD = "eom"
+
+# "full"   -> HDBSCAN on all incidents (best quality)
+# "subset" -> fit on a subset, then approximate_predict for the rest.
+#             Use it only if the "full" job gets killed for lack of memory.
+FIT_MODE = "full"
+SUBSET_SIZE = 150_000
+
+# Optional: Basel code -> business label. Unmapped codes keep their code.
+EVENT_TYPE_LABELS = {
+    # "BAT0010": "...",
+}
+
+N_EXAMPLES = 5
+EXAMPLE_MAX_CHARS = 1500
+RANDOM_STATE = 42
+
+# ============================================================
+# 1. Load the frozen 10D space
+# ============================================================
+u10 = dataiku.Dataset(UMAP10_DATASET).get_dataframe()
+u_cols = [c for c in u10.columns if c.startswith("u10_")]
+X = u10[u_cols].values.astype(np.float32)
+N = len(X)
+print(f"Clustering space: {N} incidents x {X.shape[1]} dims")
+
+# ============================================================
+# 2. HDBSCAN
+# ============================================================
+if FIT_MODE == "full":
+    print("Running HDBSCAN on the full corpus ...")
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=MIN_CLUSTER_SIZE,
+        min_samples=MIN_SAMPLES,
+        metric="euclidean",
+        cluster_selection_method=SELECTION_METHOD,
+        algorithm="boruvka_kdtree",
+        approx_min_span_tree=True,
+        core_dist_n_jobs=-1,
+    ).fit(X)
+    labels = clusterer.labels_
+    membership = clusterer.probabilities_
+else:
+    print(f"Running HDBSCAN on a {SUBSET_SIZE} subset + approximate_predict ...")
+    rng = np.random.RandomState(RANDOM_STATE)
+    sub = rng.choice(N, size=min(SUBSET_SIZE, N), replace=False)
+    sub_mcs = max(5, int(round(MIN_CLUSTER_SIZE * len(sub) / N)))
+    clusterer = hdbscan.HDBSCAN(
+        min_cluster_size=sub_mcs,
+        min_samples=MIN_SAMPLES,
+        metric="euclidean",
+        cluster_selection_method=SELECTION_METHOD,
+        algorithm="boruvka_kdtree",
+        core_dist_n_jobs=-1,
+        prediction_data=True,
+    ).fit(X[sub])
+    labels, membership = hdbscan.approximate_predict(clusterer, X)
+
+n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+print(f"  clusters : {n_clusters}")
+print(f"  coverage : {(labels != -1).mean():.1%}")
+
+# ============================================================
+# 3. Soft assignment for unclustered incidents
+#    Each noise point is attached to the majority cluster among its
+#    10 nearest clustered neighbours; confidence = share of votes.
+#    Cheap at this scale, unlike all_points_membership_vectors.
+# ============================================================
+core_mask = labels != -1
+cluster_assigned = labels.copy()
+assignment_confidence = np.where(core_mask, 1.0, 0.0)
+
+if (~core_mask).any() and core_mask.any():
+    print("Soft-assigning unclustered incidents ...")
+    nn = NearestNeighbors(n_neighbors=10).fit(X[core_mask])
+    _, idx = nn.kneighbors(X[~core_mask])
+    neigh_labels = labels[core_mask][idx]
+
+    voted, conf = [], []
+    for row in neigh_labels:
+        vals, counts = np.unique(row, return_counts=True)
+        j = counts.argmax()
+        voted.append(vals[j])
+        conf.append(counts[j] / len(row))
+
+    cluster_assigned[~core_mask] = voted
+    assignment_confidence[~core_mask] = conf
+
+# ============================================================
+# 4. Assemble the incident-level table
+# ============================================================
+res = pd.DataFrame({
+    ID_COL: u10[ID_COL].values,
+    "cluster": labels,
+    "membership": np.round(membership, 4),
+    "cluster_assigned": cluster_assigned,
+    "assignment_confidence": np.round(assignment_confidence, 3),
+    "is_core": core_mask,
+})
+
+umap2d = dataiku.Dataset(UMAP2D_DATASET).get_dataframe(
+    columns=[ID_COL, DESC_COL, "umap_x", "umap_y"])
+
+meta_schema = [c["name"] for c in dataiku.Dataset(META_DATASET).read_schema()]
+wanted = [ID_COL, EVENT_COL, CLEAN_COL, DATE_COL]
+present = [c for c in wanted if c in meta_schema]
+missing = [c for c in wanted if c not in meta_schema]
+if missing:
+    print(f"WARNING: columns not found in {META_DATASET}: {missing}")
+
+meta = (dataiku.Dataset(META_DATASET).get_dataframe(columns=present)
+        .drop_duplicates(subset=[ID_COL]))
+
+final = (res.merge(umap2d, on=ID_COL, how="left")
+            .merge(meta, on=ID_COL, how="left"))
+
+final["desc_length"] = final[DESC_COL].fillna("").str.len()
+
+HAS_EVENT = EVENT_COL in final.columns
+HAS_CLEAN = CLEAN_COL in final.columns
+HAS_DATE = DATE_COL in final.columns
+
+if HAS_EVENT:
+    final["event_type_label"] = (
+        final[EVENT_COL].map(EVENT_TYPE_LABELS).fillna(final[EVENT_COL]))
+if HAS_DATE:
+    final["year"] = pd.to_datetime(final[DATE_COL], errors="coerce").dt.year
+
+dataiku.Dataset(OUT_INCIDENTS).write_with_schema(final)
+print(f"Wrote {OUT_INCIDENTS}: {len(final)} rows")
+
+# ============================================================
+# 5. Cluster profiles (core members only)
+# ============================================================
+work = final[final["cluster"] != -1].reset_index(drop=True)
+
+# Cleaned text gives readable terms; fall back to raw English text
+text_col = CLEAN_COL if HAS_CLEAN else DESC_COL
+cv = CountVectorizer(
+    min_df=20, max_df=0.50, ngram_range=(1, 2), max_features=50_000,
+    stop_words=None if HAS_CLEAN else "english",
+)
+M = cv.fit_transform(work[text_col].fillna("").astype(str)).tocsr()
+vocab = np.array(cv.get_feature_names_out())
+corpus_rate = (np.asarray(M.sum(axis=0)).ravel() + 1.0) / M.shape[0]
+
+event_col_for_profile = "event_type_label" if HAS_EVENT else None
+groups = work.groupby("cluster").indices
+profiles = []
+
+for c, pos in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+    n = len(pos)
+    sub = work.iloc[pos]
+
+    # Distinctive terms: in-cluster rate divided by corpus rate
+    freq = np.asarray(M[pos].sum(axis=0)).ravel()
+    score = (freq / n) / corpus_rate
+    score[freq < 10] = 0
+    top_terms = vocab[np.argsort(score)[::-1][:12]]
+
+    n_unique = int(sub[DESC_COL].fillna("").str.strip().str.lower().nunique())
+    mean_mb = float(sub["membership"].mean())
+
+    row = {
+        "cluster": int(c),
+        "size": n,
+        "share_pct": round(100 * n / len(final), 2),
+        "top_terms": ", ".join(top_terms),
+        "n_unique_descriptions": n_unique,
+        "repetition_factor": round(n / max(n_unique, 1), 1),
+        "mean_membership": round(mean_mb, 3),
+        "quality_flag": ("STRONG" if mean_mb >= 0.75
+                         else "MEDIUM" if mean_mb >= 0.55 else "WEAK"),
+        "mean_desc_length": int(sub["desc_length"].mean()),
+        "analyst_label": "",
+        "analyst_comment": "",
+    }
+
+    if event_col_for_profile:
+        et = sub[event_col_for_profile].value_counts()
+        purity = float(et.iloc[0] / n) if len(et) else np.nan
+        row.update({
+            "dominant_event_type": et.index[0] if len(et) else None,
+            "event_type_purity": round(purity, 2),
+            "n_event_types": int(sub[event_col_for_profile].nunique()),
+            "taxonomy_relation": ("ALIGNED" if purity >= 0.85
+                                  else "PARTIAL" if purity >= 0.60
+                                  else "CROSS_CUTTING"),
+        })
+
+    # Temporal profile: a very narrow year range suggests the family
+    # reflects an era (system, product, wording habit) rather than a
+    # durable root cause
+    if HAS_DATE:
+        yrs = sub["year"].dropna()
+        if len(yrs):
+            iqr = float(yrs.quantile(0.75) - yrs.quantile(0.25))
+            row.update({
+                "year_min": int(yrs.min()),
+                "year_max": int(yrs.max()),
+                "year_median": int(yrs.median()),
+                "year_iqr": round(iqr, 1),
+                "temporal_flag": "TIME_CONCENTRATED" if iqr <= 2 else "SPREAD",
+            })
+
+    reps = sub.nlargest(N_EXAMPLES, "membership")
+    for i in range(N_EXAMPLES):
+        if i < len(reps):
+            row[f"example_{i+1}_ref"] = reps.iloc[i][ID_COL]
+            row[f"example_{i+1}"] = str(reps.iloc[i][DESC_COL])[:EXAMPLE_MAX_CHARS]
+        else:
+            row[f"example_{i+1}_ref"] = ""
+            row[f"example_{i+1}"] = ""
+
+    profiles.append(row)
+
+prof = pd.DataFrame(profiles)
+dataiku.Dataset(OUT_PROFILES).write_with_schema(prof)
+print(f"Wrote {OUT_PROFILES}: {len(prof)} clusters")
+
+# ============================================================
+# 6. Diagnostics
+# ============================================================
+pd.set_option("display.width", 250)
+pd.set_option("display.max_colwidth", 70)
+
+print("\n--- Coverage ---")
+print(f"Core         : {final['is_core'].sum()} ({final['is_core'].mean():.1%})")
+print(f"Unclustered  : {(~final['is_core']).sum()} ({(~final['is_core']).mean():.1%})")
+
+print("\n--- Cluster quality ---")
+print(prof["quality_flag"].value_counts().to_string())
+
+if "taxonomy_relation" in prof.columns:
+    print("\n--- Relation to Basel taxonomy ---")
+    print(prof["taxonomy_relation"].value_counts().to_string())
+
+if "temporal_flag" in prof.columns:
+    print("\n--- Temporal concentration ---")
+    print(prof["temporal_flag"].value_counts().to_string())
+    share_tc = prof.loc[prof["temporal_flag"] == "TIME_CONCENTRATED", "size"].sum() / len(final)
+    print(f"Incidents in time-concentrated families: {share_tc:.1%}")
+
+print("\n--- Description length: core vs unclustered ---")
+print(final.groupby("is_core")["desc_length"].agg(["count", "mean", "median"]).to_string())
+
+print("\n--- Top 25 clusters by size ---")
+cols = [c for c in ["cluster", "size", "share_pct", "repetition_factor", "quality_flag",
+                    "taxonomy_relation", "event_type_purity", "year_min", "year_max",
+                    "temporal_flag", "top_terms"] if c in prof.columns]
+print(prof[cols].head(25).to_string(index=False))
+
+Recette D — build_HI_ALL_CLUSTER_MAP
+Inputs : HI_ALL_INCIDENTS_CLUSTERED, HI_ALL_CLUSTER_PROFILES · Output : managed folder vectorization_artifacts
+Un point important : on ne peut pas mettre 370 000 points dans un HTML. Avec les descriptions au survol, le fichier dépasserait 200 Mo et ne s'ouvrirait plus dans le navigateur. La carte utilise donc un échantillon proportionnel de 40 000 points, avec un minimum par cluster pour que les petites familles restent visibles. Les tailles et pourcentages affichés restent ceux du corpus complet.
+import dataiku
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import tempfile
+import os
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+IN_INCIDENTS = "HI_ALL_INCIDENTS_CLUSTERED"
+IN_PROFILES = "HI_ALL_CLUSTER_PROFILES"
+FOLDER = "vectorization_artifacts"
+OUTPUT_FILE = "cluster_map_all.html"
+
+ID_COL, DESC_COL = "LB_REF", "LB_DESC_EN"
+MAX_POINTS = 40_000        # a full 370k-point map would not open in a browser
+MIN_PER_CLUSTER = 40       # keeps small families visible
+NOISE_POINTS = 5_000
+HOVER_CHARS = 300
+RANDOM_STATE = 42
+
+df = dataiku.Dataset(IN_INCIDENTS).get_dataframe()
+prof = dataiku.Dataset(IN_PROFILES).get_dataframe()
+N_TOTAL = len(df)
+
+# ============================================================
+# 1. Proportional sample per cluster (display only)
+# ============================================================
+core = df[df["cluster"] != -1]
+noise = df[df["cluster"] == -1]
+ratio = MAX_POINTS / max(len(core), 1)
+
+parts = []
+for c, g in core.groupby("cluster"):
+    n = min(len(g), max(MIN_PER_CLUSTER, int(round(len(g) * ratio))))
+    parts.append(g.sample(n=n, random_state=RANDOM_STATE))
+core_s = pd.concat(parts, ignore_index=True)
+noise_s = noise.sample(n=min(NOISE_POINTS, len(noise)), random_state=RANDOM_STATE)
+print(f"Displayed: {len(core_s)} clustered + {len(noise_s)} unclustered points")
+
+# ============================================================
+# 2. Attach cluster context (sizes are full-corpus figures)
+# ============================================================
+keep = [c for c in ["cluster", "size", "share_pct", "top_terms", "quality_flag",
+                    "taxonomy_relation", "year_min", "year_max", "analyst_label"]
+        if c in prof.columns]
+core_s = core_s.merge(prof[keep], on="cluster", how="left")
+
+def make_name(r):
+    stats = f"{int(r['size'])} — {r['share_pct']:.1f}%"
+    label = r.get("analyst_label")
+    label = "" if pd.isna(label) else str(label).strip()
+    cid = int(r["cluster"])
+    return f"C{cid} — {label} ({stats})" if label else f"C{cid} ({stats})"
+
+core_s["cluster_name"] = core_s.apply(make_name, axis=1)
+
+def wrap(text, width=90, max_chars=HOVER_CHARS):
+    t = str(text)[:max_chars]
+    lines, cur = [], ""
+    for w in t.split():
+        if len(cur) + len(w) + 1 > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    lines.append(cur)
+    return "<br>".join(lines)
+
+core_s["hover_desc"] = core_s[DESC_COL].apply(wrap)
+core_s["hover_terms"] = core_s["top_terms"].fillna("").apply(
+    lambda t: wrap(t, width=70, max_chars=200))
+
+event_col = "event_type_label" if "event_type_label" in core_s.columns else None
+core_s["hover_event"] = core_s[event_col].fillna("—") if event_col else "—"
+
+if {"year_min", "year_max"}.issubset(core_s.columns):
+    core_s["hover_years"] = (core_s["year_min"].astype("Int64").astype(str) + "–"
+                             + core_s["year_max"].astype("Int64").astype(str))
+else:
+    core_s["hover_years"] = "—"
+
+for col in ["quality_flag", "taxonomy_relation"]:
+    if col not in core_s.columns:
+        core_s[col] = "—"
+
+# ============================================================
+# 3. Plot
+# ============================================================
+order = (core_s.groupby("cluster_name")["size"].first()
+               .sort_values(ascending=False).index.tolist())
+
+# Large palette: with 100+ families, the default 10 colours repeat too often
+palette = (px.colors.qualitative.Dark24 + px.colors.qualitative.Alphabet
+           + px.colors.qualitative.Light24)
+
+n_core_full = int((df["cluster"] != -1).sum())
+fig = px.scatter(
+    core_s, x="umap_x", y="umap_y",
+    color="cluster_name",
+    category_orders={"cluster_name": order},
+    color_discrete_sequence=palette,
+    render_mode="webgl",
+    custom_data=[ID_COL, "hover_desc", "hover_terms", "hover_event",
+                 "cluster", "size", "share_pct", "quality_flag",
+                 "taxonomy_relation", "hover_years"],
+    width=1600, height=950,
+    title=(f"MLION — {prof.shape[0]} root-cause families | "
+           f"{n_core_full:,} of {N_TOTAL:,} incidents clustered "
+           f"({n_core_full / N_TOTAL:.1%}) | map shows a {len(core_s):,}-point sample"),
+)
+fig.update_traces(
+    marker=dict(size=4, opacity=0.8, line=dict(width=0)),
+    hovertemplate=(
+        "<b>%{customdata[0]}</b> — cluster %{customdata[4]}<br>"
+        "Family size: %{customdata[5]} incidents (%{customdata[6]:.1f}% of corpus)<br>"
+        "Quality: %{customdata[7]} | Taxonomy: %{customdata[8]} | Years: %{customdata[9]}<br>"
+        "Event type: %{customdata[3]}<br>"
+        "<i>Cluster terms:</i> %{customdata[2]}<br><br>"
+        "%{customdata[1]}<extra></extra>"
+    ),
+)
+
+if len(noise_s):
+    fig.add_trace(go.Scattergl(
+        x=noise_s["umap_x"], y=noise_s["umap_y"],
+        mode="markers", name="Unclustered",
+        marker=dict(size=3, color="lightgrey", opacity=0.35),
+        visible="legendonly", hoverinfo="skip",
+    ))
+
+fig.update_layout(
+    hoverlabel=dict(bgcolor="white", font_size=12, align="left"),
+    legend=dict(itemsizing="constant", font=dict(size=9), title="Clusters (by size)"),
+    xaxis_title=None, yaxis_title=None, plot_bgcolor="white",
+)
+fig.update_xaxes(showgrid=False, zeroline=False, showticklabels=False)
+fig.update_yaxes(showgrid=False, zeroline=False, showticklabels=False)
+
+# ============================================================
+# 4. Save as a standalone file (no CDN dependency)
+# ============================================================
+with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as t:
+    tmp = t.name
+try:
+    fig.write_html(tmp, include_plotlyjs=True)
+    with open(tmp, "rb") as f:
+        dataiku.Folder(FOLDER).upload_stream(OUTPUT_FILE, f)
+    print(f"Uploaded {OUTPUT_FILE} ({os.path.getsize(tmp) / 1e6:.1f} MB)")
+finally:
+    os.remove(tmp)
+
+Ordre d'exécution
+Étape	Recette	Durée estimée
+1	A — UMAP 10D	30 à 60 min
+2	B — sweep sur 60k	20 à 40 min
+3	Tu m'envoies la shortlist, on fixe MIN_CLUSTER_SIZE	—
+4	C — clustering final	20 à 60 min
+5	D — carte HTML	quelques minutes
+À ajuster avant de lancer
+	•	META_DATASET dans B et C : le nom du dataset qui contient CD_EVENT_TYPE pour les 370k.
+	•	CLEAN_COL et DATE_COL dans C. S'ils n'existent pas, la recette tourne quand même : elle affiche un WARNING et saute les colonnes concernées.
+	•	La mémoire du conteneur Dataiku pour C. Si le job est tué sans message d'erreur Python (c'est ce qui arrive en cas de manque de mémoire), passe FIT_MODE = "subset".
+Ce qui est nouveau dans les profils
+La recette C ajoute un profil temporel par famille : year_min, year_max, year_iqr, et un indicateur temporal_flag. Sur 27 ans de données, c'est le risque principal de ce corpus. Une famille marquée TIME_CONCENTRATED regroupe des incidents d'une même époque (un système, un produit, une habitude de saisie), et pas forcément une cause racine durable. C'est l'équivalent temporel du bug de langue qu'on a eu.
+Envoie-moi d'abord la shortlist du sweep. Ensuite, après la recette C, le top 25 avec la ligne Incidents in time-concentrated families : ce chiffre dira si le corpus historique se clusterise par thème ou par période.
