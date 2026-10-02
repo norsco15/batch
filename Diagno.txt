@@ -1,0 +1,151 @@
+
+Non, 49 % c'est trop — mais il faut diagnostiquer avant de corriger
+174k sur 357k, ça fait 48,7 % de bruit. Sur le corpus 2025 on était à 20 %, et notre seuil d'acceptation était 40 %. Pour un corpus de 27 ans, avec beaucoup d'incidents uniques et anciens, 30-35 % serait légitime. 49 % ne l'est pas.
+Les 107 clusters en revanche sont un bon chiffre : ~1 700 incidents en moyenne par famille, c'est la granularité qu'on visait.
+Rien n'est perdu non plus : les 174k ont un cluster_assigned avec un score de confiance. Mais à ce niveau, l'affectation de secours fait trop de travail.
+Quatre causes possibles
+	1.	Les paramètres ne se sont pas transposés de l'échantillon au corpus complet. Le sweep calibrait sur 60k points. min_cluster_size se met à l'échelle proportionnellement, mais pas min_samples, qui mesure la densité locale. Compare : quel noise_pct le sweep annonçait-il pour la config que tu as retenue ? S'il disait 25 % et que tu obtiens 49 %, c'est ça.
+	2.	L'effet du transform UMAP. On a fitté UMAP sur 100k points puis projeté les 257k autres. Les points projetés sont souvent moins bien « tassés » que les points fittés, donc plus diffus, donc plus souvent du bruit pour HDBSCAN.
+	3.	Les incidents anciens ou très courts. Des descriptions de 1999-2005 de deux lignes, ou des traductions ratées, se retrouvent naturellement isolées.
+	4.	Une vraie longue traîne. Des incidents qui ne se répètent pas. Ça, c'est du bruit légitime.
+Chaque cause a un remède différent, d'où le diagnostic.
+Le diagnostic (5 minutes, sur tes outputs existants)
+import dataiku
+import numpy as np
+import pandas as pd
+
+INCIDENTS = "HI_ALL_INCIDENTS_CLUSTERED"
+UMAP10 = "HI_ALL_UMAP_10D"
+FIT_SAMPLE, SAMPLE_SEED = 100_000, 42      # same values as recipe A
+
+schema = [c["name"] for c in dataiku.Dataset(INCIDENTS).read_schema()]
+cols = [c for c in ["LB_REF", "cluster", "assignment_confidence", "desc_length",
+                    "year", "event_type_label"] if c in schema]
+df = dataiku.Dataset(INCIDENTS).get_dataframe(columns=cols)
+df["is_noise"] = df["cluster"] == -1
+print(f"Overall noise: {df['is_noise'].mean():.1%}  ({df['is_noise'].sum()} / {len(df)})")
+
+# --- 1. UMAP transform effect: were fitted points clustered more often? ---
+# Rebuilds the fit subset of recipe A (assumes the row order of
+# HI_ALL_UMAP_10D is preserved, which holds for a single-file dataset)
+u_ids = dataiku.Dataset(UMAP10).get_dataframe(columns=["LB_REF"])["LB_REF"].values
+rng = np.random.RandomState(SAMPLE_SEED)
+fit_idx = rng.choice(len(u_ids), size=min(FIT_SAMPLE, len(u_ids)), replace=False)
+df["umap_fitted"] = df["LB_REF"].isin(set(u_ids[fit_idx]))
+print("\n--- Noise: UMAP-fitted vs transformed points ---")
+print(df.groupby("umap_fitted")["is_noise"].agg(["count", "mean"]).round(3).to_string())
+
+# --- 2. Description length ---
+bins = [0, 100, 300, 800, 1500, np.inf]
+df["len_bucket"] = pd.cut(df["desc_length"], bins=bins,
+                          labels=["<100", "100-300", "300-800", "800-1500", ">1500"])
+print("\n--- Noise by description length ---")
+print(df.groupby("len_bucket", observed=True)["is_noise"].agg(["count", "mean"]).round(3).to_string())
+
+# --- 3. Period ---
+if "year" in df.columns:
+    df["period"] = pd.cut(df["year"], bins=[1998, 2005, 2010, 2015, 2020, 2030],
+                          labels=["1999-05", "2006-10", "2011-15", "2016-20", "2021+"])
+    print("\n--- Noise by period ---")
+    print(df.groupby("period", observed=True)["is_noise"].agg(["count", "mean"]).round(3).to_string())
+
+# --- 4. How close are noise points to an existing family? ---
+noise_conf = df.loc[df["is_noise"], "assignment_confidence"]
+print("\n--- Noise points: nearest-family confidence ---")
+print(f"  >= 0.8 (on the edge of a family) : {(noise_conf >= 0.8).mean():.1%}")
+print(f"  0.5 - 0.8                        : {noise_conf.between(0.5, 0.8, inclusive='left').mean():.1%}")
+print(f"  < 0.5 (genuinely isolated)       : {(noise_conf < 0.5).mean():.1%}")
+
+# --- 5. Event type ---
+if "event_type_label" in df.columns:
+    print("\n--- Noise by event type (top 10 by volume) ---")
+    et = df.groupby("event_type_label")["is_noise"].agg(["count", "mean"])
+    print(et.sort_values("count", ascending=False).head(10).round(3).to_string())
+Comment lire les résultats
+Ce que tu observes	Cause	Remède
+Points transformés nettement plus bruités que les points fittés (ex. 55 % vs 30 %)	Effet transform UMAP	Refitter UMAP sur plus de points (200k ou tout le corpus)
+Majorité du bruit avec confiance ≥ 0,8	Paramètres trop stricts : ces points touchent une famille	Baisser min_samples (voir ci-dessous)
+Bruit concentré sur les descriptions < 100 caractères	Textes trop pauvres	Normal. Les exclure du périmètre ou les assumer comme « non classables »
+Bruit concentré sur 1999-2010	Hétérogénéité temporelle	Traiter l'historique ancien à part, ou clusteriser le récent puis rattacher l'ancien
+Bruit uniforme partout, confiance faible	Vraie longue traîne	Accepter, et présenter deux niveaux de couverture
+Plusieurs causes peuvent se cumuler, c'est même probable.
+Si c'est un problème de paramètres : re-sweep rapide sur le corpus complet
+C'est là que l'architecture avec l'espace 10D figé paie : on relance HDBSCAN sans refaire UMAP. Le levier principal sur le bruit est min_samples.
+import dataiku
+import numpy as np
+import pandas as pd
+import hdbscan
+from sklearn.metrics import silhouette_score
+
+u10 = dataiku.Dataset("HI_ALL_UMAP_10D").get_dataframe()
+X = u10[[c for c in u10.columns if c.startswith("u10_")]].values.astype(np.float32)
+
+# min_samples is the main lever on noise: lower = less conservative
+for mcs in [300, 500]:
+    for ms in [3, 5]:
+        lab = hdbscan.HDBSCAN(
+            min_cluster_size=mcs, min_samples=ms, metric="euclidean",
+            cluster_selection_method="eom", algorithm="boruvka_kdtree",
+            approx_min_span_tree=True, core_dist_n_jobs=-1,
+        ).fit_predict(X)
+        m = lab != -1
+        sizes = pd.Series(lab[m]).value_counts()
+        sil = silhouette_score(X[m], lab[m], sample_size=10_000, random_state=42)
+        print(f"mcs={mcs} ms={ms} | k={len(sizes)} | noise={1 - m.mean():.1%} | "
+              f"sil={sil:.3f} | max share={100 * sizes.max() / len(lab):.1f}%")
+Compte 5 à 15 minutes par run. Vise un bruit sous 35 % avec un silhouette qui reste au-dessus de 0,45.
+Ce que j'attends
+	1.	La config que tu as utilisée (MIN_CLUSTER_SIZE, MIN_SAMPLES), et le noise_pct que le sweep prévoyait pour elle.
+	2.	La sortie du diagnostic.
+Avec ça, on saura si on corrige les paramètres, si on refait UMAP, ou si on traite l'historique ancien à part.
+
+
+Ce que ces valeurs disent
+mcs=500 et ms=10 sont des valeurs raisonnables, mais elles expliquent probablement une partie du bruit.
+min_cluster_size = 500 impose qu'une famille compte au moins 500 incidents. Sur 27 ans de données, il existe sûrement beaucoup de familles cohérentes de 150 à 450 incidents. Elles ne sont pas assez grosses pour former un cluster, donc HDBSCAN les classe en bruit. Ce n'est pas qu'elles n'ont pas de sens : elles sont juste sous le seuil.
+min_samples = 10 a été calibré sur l'échantillon de 60k. Ce paramètre mesure la densité locale, et la densité de l'échantillon est environ 6 fois plus faible que celle du corpus complet. Sa valeur ne se transpose donc pas proprement d'un espace à l'autre, contrairement à min_cluster_size qu'on a mis à l'échelle. C'est le paramètre le plus suspect.
+Le re-sweep à lancer, centré sur ta config
+Puisqu'on connaît maintenant le point de départ, on peut resserrer la grille. Les deux leviers sur le bruit sont de baisser min_samples et de baisser min_cluster_size.
+import dataiku
+import numpy as np
+import pandas as pd
+import hdbscan
+from sklearn.metrics import silhouette_score
+
+u10 = dataiku.Dataset("HI_ALL_UMAP_10D").get_dataframe()
+X = u10[[c for c in u10.columns if c.startswith("u10_")]].values.astype(np.float32)
+N = len(X)
+
+# Baseline was mcs=500 / ms=10 -> 48.7% noise, 107 clusters.
+# Both levers below reduce noise; the question is the cost in quality.
+GRID = [
+    (500, 5), (500, 3),      # same family size, less conservative density
+    (300, 10), (300, 5),     # allow smaller families
+    (200, 5),                # most permissive
+]
+
+rows = []
+for mcs, ms in GRID:
+    lab = hdbscan.HDBSCAN(
+        min_cluster_size=mcs, min_samples=ms, metric="euclidean",
+        cluster_selection_method="eom", algorithm="boruvka_kdtree",
+        approx_min_span_tree=True, core_dist_n_jobs=-1,
+    ).fit_predict(X)
+    m = lab != -1
+    sizes = pd.Series(lab[m]).value_counts()
+    sil = silhouette_score(X[m], lab[m], sample_size=10_000, random_state=42)
+    rows.append({
+        "mcs": mcs, "ms": ms, "n_clusters": len(sizes),
+        "noise_pct": round(1 - m.mean(), 3),
+        "silhouette": round(sil, 3),
+        "size_min": int(sizes.min()), "size_median": int(sizes.median()),
+        "max_share_pct": round(100 * sizes.max() / N, 2),
+    })
+    print(rows[-1])
+
+dataiku.Dataset("HI_ALL_HDBSCAN_FULL_SWEEP").write_with_schema(pd.DataFrame(rows))
+Compte 5 à 15 minutes par run, donc environ une heure.
+Ce qu'on cherche : un bruit sous 35 %, un silhouette au-dessus de 0,45, et pas plus de 250 clusters. Si une config descend sous 35 % sans faire chuter le silhouette, on la retient.
+Lance aussi le diagnostic en parallèle
+Le re-sweep corrige un problème de paramètres. Il ne corrige pas un problème de projection UMAP ou d'incidents trop courts. Si le diagnostic du message précédent montre que les points projetés (transform) sont nettement plus bruités que les points fittés, baisser min_samples masquera le symptôme sans traiter la cause.
+Envoie-moi les deux sorties ensemble : le tableau du re-sweep et le diagnostic. Avec ça, on saura quoi corriger.
